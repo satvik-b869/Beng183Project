@@ -1,0 +1,33 @@
+# OS/editor
+.DS_Store
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Node / Vite
+node_modules/
+frontend/.env*
+frontend/dist/
+
+# App data / generated artifacts
+db/
+storage/
+data/
+data.qc/
+qc/
+**/uploads/
+**/artifacts/
+*.sqlite
+
+# Big sequencing files (don’t version)
+*.fastq
+*.fastq.gz
+*.fq.gz
+*.bam
+*.sam
+*.bai

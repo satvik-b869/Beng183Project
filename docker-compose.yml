@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: rnaseq-app/backend/Dockerfile
+    ports:
+      - "5050:5050"
+    environment:
+      - API_PORT=5050         # ← was PORT
+      - STORAGE_ROOT=/data/storage
+      - QC_ROOT=/data/qc
+    volumes:
+      - storage:/data/storage
+      - qc:/data/qc
+
+  frontend:
+    build:
+      context: .
+      dockerfile: rnaseq-app/frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  storage:
+  qc:
