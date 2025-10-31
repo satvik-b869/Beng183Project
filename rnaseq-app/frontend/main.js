@@ -3,6 +3,51 @@ const API_BASE = "http://localhost:5050";
 document.getElementById("api-label").textContent = API_BASE;
 
 // ------- small helpers -------
+// ---- FastQC plot helpers ----
+const PRETTY = {
+  per_base_quality: "Per-base Quality",
+  per_sequence_quality: "Per-sequence Quality",
+  per_base_sequence_content: "Per-base Sequence Content",
+  per_base_gc_content: "Per-base GC Content",
+  per_sequence_gc_content: "Per-sequence GC Content",
+  per_base_n_content: "Per-base N Content",
+  seq_length_distribution: "Sequence Length Distribution",
+  duplication_levels: "Sequence Duplication Levels",
+  overrepresented_sequences: "Overrepresented Sequences",
+  adapter_content: "Adapter Content",
+};
+
+function artifactUrl(p) {
+  return `${API_BASE}/api/artifact?path=${encodeURIComponent(p)}`;
+}
+
+function renderFastqcSection(container, artifacts, tag, title) {
+  const plots = (artifacts || [])
+    .filter(a => a.kind && a.kind.startsWith(`fastqc_plot_${tag}:`))
+    .map(a => {
+      const key = a.kind.split(":")[1] || "plot";
+      return { src: artifactUrl(a.path), label: PRETTY[key] || key };
+    });
+
+  if (!plots.length) return;
+
+  const sec = document.createElement("section");
+  sec.className = "fastqc-section";
+  sec.innerHTML = `<h3>${title}</h3>`;
+  plots.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "fastqc-card";
+    card.innerHTML = `
+      <figure>
+        <img src="${p.src}" alt="${p.label}" loading="lazy" />
+        <figcaption>${p.label}</figcaption>
+      </figure>
+    `;
+    sec.appendChild(card);
+  });
+  container.appendChild(sec);
+}
+
 async function jfetch(url, opts) {
   const r = await fetch(url, opts);
   const t = await r.text();
@@ -96,14 +141,17 @@ async function pollStatus() {
       stages.find(s => /fastqc_post/i.test(s.name) && typeof s.artifact === "string" && s.artifact.endsWith(".html")) ||
       stages.find(s => typeof s.artifact === "string" && s.artifact.endsWith(".html"));
 
-    if (stage?.artifact) {
-      // Use folder-based URL so CSS/JS/images resolve inside the iframe
-      const url = qcUrlFromArtifactPath(stage.artifact);
-      showFastQC(url);
-    } else {
-      // No HTML yet — show JSON status
-      showJSON(st);
+    showJSON(st);
+
+    // ---- NEW: render individual FastQC plots ----
+    const plotsRoot = el("plots");                 // NEW (requires a <div id="plots"> in HTML)
+    if (plotsRoot) {
+      plotsRoot.innerHTML = "";                    // NEW: clear previous
+      const arts = st?.job?.artifacts || [];       // NEW
+      renderFastqcSection(plotsRoot, arts, "raw",  "FastQC (Raw)");       // NEW
+      renderFastqcSection(plotsRoot, arts, "post", "FastQC (Post-trim)"); // NEW
     }
+    // ---------------------------------------------
 
     if (["finished", "failed"].includes(st?.job?.status)) {
       clearInterval(pollTimer);
@@ -115,4 +163,5 @@ async function pollStatus() {
     el("run-btn").disabled = false;
   }
 }
+
 

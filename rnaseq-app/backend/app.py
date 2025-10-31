@@ -95,8 +95,10 @@ def run_to_dict(r: Run):
             "metrics": json.loads(s.metrics_json or "{}"),
             "artifact": s.artifact_path or None,
         } for s in r.stages],
-        "artifacts": [a.path for a in r.artifacts],
+        # <-- include kind + path so the UI can group and label
+        "artifacts": [{"kind": a.kind, "path": a.path} for a in r.artifacts],
     }
+
 
 def sh(cmd: list[str], cwd: Path | None = None):
     """Run a tool installed in the container (fastqc, fastp, star, etc.)."""
@@ -208,6 +210,24 @@ def qc_static(job_id, rest):
 # ---------------------------------
 # Pipeline (FastQC + fastp; slots left for STAR/featureCounts)
 # ---------------------------------
+
+def _add_fastqc_plots(session: Session, run: Run, images_dir: Path, tag: str):
+    """
+    Add each FastQC PNG as an Artifact with kind 'fastqc_plot_{tag}:{name}'.
+    tag = 'raw' or 'post' (or anything you like)
+    """
+    if not images_dir.exists():
+        return
+    for png in sorted(images_dir.glob("*.png")):
+        name = png.stem  # e.g., per_base_quality
+        session.add(Artifact(
+            run_id=run.id,
+            kind=f"fastqc_plot_{tag}:{name}",
+            path=str(png)
+        ))
+    session.commit()
+
+
 def _run_pipeline_real(job_id: str):
     with Session(engine) as s:
         r = s.get(Run, job_id)
@@ -235,8 +255,10 @@ def _run_pipeline_real(job_id: str):
         prefix = Path(r1.name).with_suffix("").with_suffix("").name  # handle .fastq.gz
         raw_html = raw_dir / f"{prefix}_fastqc.html"
         raw_sum_dir = raw_dir / f"{prefix}_fastqc"                  # contains summary.txt
+        raw_images = raw_sum_dir / "Images"                    # NEW
         metrics = parse_fastqc_summary(raw_sum_dir)
         _emit_stage(s, r, "pre_qc_fastqc", 15, metrics=metrics, artifact=str(raw_html))
+        _add_fastqc_plots(s, r, raw_images, tag="raw")         # NEW
 
         # 2) Trimming (fastp)
         trim_dir = work / "trim"; trim_dir.mkdir(exist_ok=True)
@@ -277,8 +299,10 @@ def _run_pipeline_real(job_id: str):
         post_prefix = Path(trimmed_r1.name).with_suffix("").with_suffix("").name
         post_html = post_dir / f"{post_prefix}_fastqc.html"
         post_sum_dir = post_dir / f"{post_prefix}_fastqc"
+        post_images = post_sum_dir / "Images"                  # NEW
         post_metrics = parse_fastqc_summary(post_sum_dir)
         _emit_stage(s, r, "post_qc_fastqc", 65, metrics=post_metrics, artifact=str(post_html))
+        _add_fastqc_plots(s, r, post_images, tag="post")       # NEW
 
         # 4) Alignment/Quantification (future)
         # _emit_stage(s, r, "align_star", 85, metrics={...}, artifact=str(...))
