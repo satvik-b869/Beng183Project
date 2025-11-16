@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RNA-seq</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body{background:#0f172a;color:#e5e7eb;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;margin:0;padding:32px}
+      h1{margin:0 0 16px;font-weight:700}
+      .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;max-width:1100px}
+      .row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+      input[type=text]{background:#0b1220;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:10px 12px;min-width:240px}
+      input[type=file]{color:#e5e7eb}
+      select{background:#0b1220;color:#e5e7eb;border:1px solid #334155;border-radius:10px;padding:10px 12px;}
+      button{background:#10b981;border:0;border-radius:10px;color:#071318;padding:10px 16px;font-weight:700;cursor:pointer}
+      button:disabled{opacity:.5;cursor:not-allowed}
+      a.link{color:#93c5fd;text-decoration:none;font-weight:700}
+      table{width:100%;border-collapse:collapse;margin-top:8px}
+      th,td{border-bottom:1px solid #1f2937;text-align:left;padding:6px 8px}
+      .muted{opacity:.75}
+      .section{margin-top:18px}
+      #log{white-space:pre-wrap;background:#0b1220;border:1px solid #1f2937;border-radius:10px;padding:12px;min-height:120px}
+    </style>
+  </head>
+  <body>
+    <h1>Alignment</h1>
+
+    <div class="card">
+      <div class="row">
+        <button id="fastqc-btn" type="button" style="background:#3b82f6;color:#0f172a">← Back to FastQC</button>
+        <span class="muted">Pipeline: STAR → featureCounts → DE (placeholder) → Metascape</span>
+      </div>
+
+      <div class="section">
+        <h2 style="margin:0 0 8px">1) Reference (FASTA + GTF)</h2>
+        <form id="ref-form" class="row" style="align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:280px">
+            <label for="ref-name" class="muted">Reference name</label>
+            <input id="ref-name" type="text" placeholder="reference name (e.g., hg38)" />
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:220px">
+            <label for="ref-fasta" class="muted">Genome FASTA (.fa/.fasta)</label>
+            <input id="ref-fasta" type="file" accept=".fa,.fasta,.fa.gz,.fna" required />
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:220px">
+            <label for="ref-gtf" class="muted">Annotation GTF (.gtf)</label>
+            <input id="ref-gtf" type="file" accept=".gtf,.gtf.gz" required />
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span class="muted">&nbsp;</span>
+            <button type="submit">Upload & Index</button>
+          </div>
+          <span id="ref-msg" class="muted" style="align-self:center"></span>
+        </form>
+
+        <div class="section">
+          <div class="row">
+            <label for="ref-select">Available references</label>
+            <select id="ref-select"></select>
+            <button id="refresh-refs" type="button">Refresh</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 style="margin:0 0 8px">2) Select QC run</h2>
+        <div class="row">
+          <select id="run-select"></select>
+          <button id="refresh-runs" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 style="margin:0 0 8px">3) Align and Quantify</h2>
+        <div class="row">
+          <button id="align-btn" disabled>Run STAR + featureCounts</button>
+          <span class="muted">Requires a READY reference and a finished QC run</span>
+        </div>
+        <div id="log" class="section"></div>
+      </div>
+
+      <div class="section">
+        <h2 style="margin:0 0 8px">Results</h2>
+        <div id="results"></div>
+        <div class="row" style="margin-top:8px">
+          <a id="counts-download" class="link" target="_blank">Download counts</a>
+        
+        </div>
+      </div>
+
+      <div class="card muted" style="margin-top:16px">
+        <div>API base: <code id="api-label"></code></div>
+      </div>
+    </div>
+
+    <script src="./alignment.js"></script>
+  </body>
+  </html>
