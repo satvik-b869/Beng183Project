@@ -279,6 +279,86 @@ prepare_dataframe <- function(df, params) {
   df
 }
 
+calculate_plot_defaults <- function(df, fallback = default_params) {
+  if (nrow(df) == 0) {
+    return(list(
+      volcano = fallback[c("title", "y_min", "y_max", "x_min", "x_max",
+                           "text_xaxis", "text_yaxis", "file_name", "breakx", "breaky")],
+      ma = fallback[c("title", "y_min", "y_max", "x_min", "x_max",
+                      "text_xaxis", "text_yaxis", "file_name", "breakx", "breaky")]
+    ))
+  }
+
+  min_log2fc <- suppressWarnings(min(df$log2fold_change, na.rm = TRUE))
+  max_log2fc <- suppressWarnings(max(df$log2fold_change, na.rm = TRUE))
+  if (!is.finite(min_log2fc)) min_log2fc <- fallback$x_min
+  if (!is.finite(max_log2fc)) max_log2fc <- fallback$x_max
+
+  positive_padj <- df$padj[df$padj > 0]
+  min_padj <- suppressWarnings(min(positive_padj, na.rm = TRUE))
+  if (!is.finite(min_padj) || min_padj <= 0) min_padj <- fallback$p_val_threshold
+  volcano_y_max <- ceiling(-log10(min_padj) / 5) * 5
+  if (!is.finite(volcano_y_max) || volcano_y_max <= 0) volcano_y_max <- 8
+
+  base_vals <- df$base_mean
+  mean_base <- suppressWarnings(mean(base_vals, na.rm = TRUE))
+  sd_base <- suppressWarnings(sd(base_vals, na.rm = TRUE))
+  max_base <- suppressWarnings(max(base_vals, na.rm = TRUE))
+  min_base <- suppressWarnings(min(base_vals, na.rm = TRUE))
+  if (!is.finite(mean_base)) mean_base <- fallback$x_max
+  if (!is.finite(sd_base)) sd_base <- 0
+  if (!is.finite(max_base)) max_base <- mean_base
+  if (!is.finite(min_base)) min_base <- mean_base
+
+  new_max_x <- min(mean_base + 3 * sd_base, max_base)
+  new_min_x <- max(mean_base - 3 * sd_base, min_base)
+  if (!is.finite(new_max_x) || !is.finite(new_min_x) || identical(new_min_x, new_max_x)) {
+    new_max_x <- max_base
+    new_min_x <- min_base
+  }
+  if (!is.finite(new_max_x)) new_max_x <- fallback$x_max
+  if (!is.finite(new_min_x)) new_min_x <- fallback$x_min
+
+  calc_break <- function(max_val, min_val) {
+    range_val <- ceiling(max_val) - floor(min_val)
+    br <- floor(range_val / 5)
+    if (!is.finite(br) || br < 1) 1 else br
+  }
+
+  calc_break_from_value <- function(value) {
+    br <- floor(value / 5)
+    if (!is.finite(br) || br < 1) 1 else br
+  }
+
+  volcano_defaults <- list(
+    title = "Volcano Plot",
+    y_min = 0,
+    y_max = volcano_y_max,
+    x_min = floor(min_log2fc),
+    x_max = ceiling(max_log2fc),
+    text_xaxis = "Log2 Fold Change",
+    text_yaxis = "-log10(p-val)",
+    file_name = "volcano_plot",
+    breakx = calc_break(max_log2fc, min_log2fc),
+    breaky = calc_break_from_value(volcano_y_max)
+  )
+
+  ma_defaults <- list(
+    title = "MA Plot",
+    y_min = floor(min_log2fc),
+    y_max = ceiling(max_log2fc),
+    x_min = floor(new_min_x),
+    x_max = ceiling(new_max_x),
+    text_xaxis = "Log2 Mean Expression",
+    text_yaxis = "Log2 Fold Change",
+    file_name = "MA_plot",
+    breakx = calc_break(new_max_x, new_min_x),
+    breaky = calc_break(max_log2fc, min_log2fc)
+  )
+
+  list(volcano = volcano_defaults, ma = ma_defaults)
+}
+
 build_plot <- function(df, params) {
   cols_selected <- c(
     setNames(params$up_color_selected, paste0(params$custom_upreg_text, "_SELECTED")),
@@ -426,6 +506,40 @@ save_plot_image <- function(plot_obj, params, file_path, file_type = "png") {
   }
 
   ggsave(file_path, plot = plot_obj, width = width_value, height = height_value, units = units, dpi = params$dpi, device = file_type)
+}
+
+
+#* @parser multi
+#* @post /defaults
+#* @serializer unboxedJSON
+function(req, res) {
+  tryCatch({
+    parts <- req$body %||% list()
+
+    get_part <- function(name) {
+      for (p in parts) {
+        if (!is.null(p$name) && identical(p$name, name)) return(p)
+      }
+      NULL
+    }
+
+    file_part <- get_part("data_file")
+    if (is.null(file_part)) {
+      res$status <- 400
+      return(list(error = "Data file (data_file) is required."))
+    }
+
+    tmp_file <- tempfile(fileext = ".csv")
+    on.exit(unlink(tmp_file), add = TRUE)
+    writeBin(file_part$value, tmp_file)
+
+    df <- read_uploaded_data(tmp_file)
+    list(defaults = calculate_plot_defaults(df))
+  }, error = function(e) {
+    message("Defaults error: ", conditionMessage(e))
+    res$status <- 400
+    list(error = conditionMessage(e))
+  })
 }
 
 
@@ -626,24 +740,35 @@ function(name, res) {
 # 
 # pr$run(host = "0.0.0.0", port = 8000)
 
+# helper to read file contents safely
+read_file <- function(path) {
+  if (!file.exists(path)) {
+    return("Not found")
+  }
+  readChar(path, file.info(path)$size)
+}
+
 #* @get /
 #* @serializer html
 function() {
-  readChar(file.path("www", "index.html"),
-           file.info(file.path("www", "index.html"))$size)
+  read_file(file.path("..", "home.html"))
+}
+
+#* @get /volcano
+#* @serializer html
+function() {
+  read_file(file.path("www", "volcano-ma.html"))
 }
 
 #* @get /styles.css
 #* @serializer contentType list(type="text/css")
 function() {
-  readChar(file.path("www", "styles.css"),
-           file.info(file.path("www", "styles.css"))$size)
+  read_file(file.path("www", "styles.css"))
 }
 
 #* @get /app.js
 #* @serializer contentType list(type="text/javascript")
 function() {
-  readChar(file.path("www", "app.js"),
-           file.info(file.path("www", "app.js"))$size)
+  read_file(file.path("www", "app.js"))
 }
 

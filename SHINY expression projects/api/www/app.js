@@ -7,13 +7,27 @@ const settingsNameInput = document.getElementById("settings-name");
 const loadingIndicator = document.getElementById("loading-indicator");
 const plotImage = document.getElementById("plot-image");
 const controls = document.querySelectorAll("[data-param]");
+const showMACheckbox = document.querySelector('[data-param="showMA"]');
 const emptyState = document.querySelector("[data-empty]");
 const fileStatus = document.getElementById("file-status");
 const plotContainer = document.getElementById("plot-container");
+const zoomControls = document.getElementById("plot-zoom-controls");
+const zoomInBtn = document.getElementById("zoom-in");
+const zoomOutBtn = document.getElementById("zoom-out");
 
 
 let currentFile = null;
 let activeUrl = null;
+let cachedDefaults = null;
+let zoomScale = 1;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 3;
+const ZOOM_STEP = 0.25;
+let translateState = { x: 0, y: 0 };
+let dragStart = { x: 0, y: 0 };
+let dragOrigin = { x: 0, y: 0 };
+let isDragging = false;
+let dragPointerId = null;
 const debounce = (fn, delay = 400) => {
   let timeout;
   return (...args) => {
@@ -26,9 +40,156 @@ const setLoading = (isLoading) => {
   document.body.dataset.loading = isLoading ? "true" : "false";
 };
 
+const autoDefaultFields = [
+  "title",
+  "y_min",
+  "y_max",
+  "x_min",
+  "x_max",
+  "text_xaxis",
+  "text_yaxis",
+  "file_name",
+  "breakx",
+  "breaky"
+];
+
+const getControl = (name) => document.querySelector(`[data-param="${name}"]`);
+
+const applyZoomTransform = () => {
+  if (!plotImage) return;
+  plotImage.style.transform = `translate(${translateState.x}px, ${translateState.y}px) scale(${zoomScale})`;
+  plotImage.style.cursor = zoomScale > 1 ? "grab" : "default";
+};
+
+const clampTranslation = () => {
+  if (!plotImage || !plotContainer) return;
+  const containerWidth = plotContainer.clientWidth;
+  const containerHeight = plotContainer.clientHeight;
+  const baseWidth = plotImage.offsetWidth;
+  const baseHeight = plotImage.offsetHeight;
+  if (!baseWidth || !baseHeight || !containerWidth || !containerHeight) {
+    translateState = { x: 0, y: 0 };
+    return;
+  }
+  const maxX = Math.max(0, (baseWidth * zoomScale - containerWidth) / 2);
+  const maxY = Math.max(0, (baseHeight * zoomScale - containerHeight) / 2);
+  translateState.x = Math.min(maxX, Math.max(-maxX, translateState.x));
+  translateState.y = Math.min(maxY, Math.max(-maxY, translateState.y));
+};
+
+const updateZoomButtons = () => {
+  if (!zoomInBtn || !zoomOutBtn) return;
+  const atMin = zoomScale <= MIN_ZOOM + 0.001;
+  const atMax = zoomScale >= MAX_ZOOM - 0.001;
+  zoomOutBtn.disabled = atMin;
+  zoomInBtn.disabled = atMax;
+};
+
+const resetZoom = () => {
+  zoomScale = MIN_ZOOM;
+  translateState = { x: 0, y: 0 };
+  applyZoomTransform();
+  updateZoomButtons();
+  if (document.body) {
+    document.body.dataset.dragging = "false";
+  }
+};
+
+const setZoom = (targetScale) => {
+  const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetScale));
+  zoomScale = nextScale;
+  if (zoomScale === MIN_ZOOM) {
+    translateState = { x: 0, y: 0 };
+  } else {
+    clampTranslation();
+  }
+  applyZoomTransform();
+  updateZoomButtons();
+};
+
+const startDrag = (event) => {
+  if (zoomScale <= MIN_ZOOM) return;
+  event.preventDefault();
+  isDragging = true;
+  dragPointerId = event.pointerId;
+  dragStart = { x: event.clientX, y: event.clientY };
+  dragOrigin = { ...translateState };
+  plotImage.setPointerCapture?.(dragPointerId);
+  if (document.body) {
+    document.body.dataset.dragging = "true";
+  }
+};
+
+const handleDrag = (event) => {
+  if (!isDragging || event.pointerId !== dragPointerId) return;
+  const deltaX = event.clientX - dragStart.x;
+  const deltaY = event.clientY - dragStart.y;
+  translateState.x = dragOrigin.x + deltaX;
+  translateState.y = dragOrigin.y + deltaY;
+  clampTranslation();
+  applyZoomTransform();
+};
+
+const endDrag = (event) => {
+  if (!isDragging || event.pointerId !== dragPointerId) return;
+  isDragging = false;
+  plotImage.releasePointerCapture?.(dragPointerId);
+  dragPointerId = null;
+  if (document.body) {
+    document.body.dataset.dragging = "false";
+  }
+  clampTranslation();
+  applyZoomTransform();
+};
+
+const applyDefaults = (useMA, triggerPlot = false) => {
+  if (!cachedDefaults) return;
+  const target = useMA ? cachedDefaults?.ma : cachedDefaults?.volcano;
+  if (!target) return;
+
+  autoDefaultFields.forEach((field) => {
+    if (!(field in target)) return;
+    const el = getControl(field);
+    if (!el) return;
+    const value = target[field];
+    if (el.type === "checkbox") {
+      el.checked = Boolean(value);
+      return;
+    }
+    el.value = value ?? "";
+  });
+
+  if (triggerPlot && currentFile) {
+    debouncedPlotRequest();
+  }
+};
+
+const updateFileStatus = (file) => {
+  if (!fileStatus) return;
+  if (!file) {
+    fileStatus.textContent = "No file selected.";
+    fileStatus.classList.remove("text-emerald-600", "dark:text-emerald-400", "font-medium");
+    fileStatus.classList.add("text-gray-500", "dark:text-gray-400");
+    return;
+  }
+  const maxLength = 40;
+  const displayName = file.name.length > maxLength
+    ? `${file.name.slice(0, maxLength - 3)}...`
+    : file.name;
+  fileStatus.textContent = `Selected: ${displayName}`;
+  fileStatus.classList.remove("text-gray-500", "dark:text-gray-400");
+  fileStatus.classList.add("text-emerald-600", "dark:text-emerald-400", "font-medium");
+};
+
 const setHasPlot = (hasPlot) => {
   document.body.dataset.hasPlot = hasPlot ? "true" : "false";
-  emptyState.style.display = hasPlot ? "none" : "flex";
+  if (emptyState) {
+    const shouldShowEmpty = !currentFile;
+    emptyState.style.display = shouldShowEmpty ? "flex" : "none";
+  }
+  if (zoomControls) {
+    zoomControls.classList.toggle("hidden", !hasPlot);
+  }
 };
 
 const clearPlot = () => {
@@ -39,6 +200,7 @@ const clearPlot = () => {
   }
   plotImage.src = "";
   plotImage.classList.add("hidden");
+  resetZoom();
 };
 
 
@@ -95,6 +257,9 @@ const showPlot = (blob) => {
   }
   activeUrl = URL.createObjectURL(blob);
   plotImage.src = activeUrl;
+  plotImage.classList.remove("hidden");
+  plotContainer?.classList.add("no-border");
+  resetZoom();
   setHasPlot(true);
 };
 
@@ -127,18 +292,7 @@ const plotRequest = async () => {
 
     const blob = await response.blob();
 
-    if (activeUrl) {
-      URL.revokeObjectURL(activeUrl);
-    }
-    activeUrl = URL.createObjectURL(blob);
-
-    plotImage.src = activeUrl;
-    plotImage.classList.remove("hidden");
-
-    // 🔴 THIS is the important line:
-    plotContainer.classList.add("no-border");
-
-    setHasPlot(true);
+    showPlot(blob);
   } catch (err) {
     console.error("Plot failed", err);
     alert("Unable to generate plot.");
@@ -150,6 +304,28 @@ const plotRequest = async () => {
 
 
 const debouncedPlotRequest = debounce(plotRequest, 600);
+
+const fetchDefaults = async () => {
+  if (!currentFile) {
+    cachedDefaults = null;
+    return null;
+  }
+  const formData = new FormData();
+  formData.append("data_file", currentFile);
+  try {
+    const response = await fetch("/defaults", { method: "POST", body: formData });
+    if (!response.ok) {
+      throw new Error("Unable to fetch defaults");
+    }
+    const json = await response.json();
+    cachedDefaults = json?.defaults || null;
+    return cachedDefaults;
+  } catch (err) {
+    console.error("Defaults request failed", err);
+    cachedDefaults = null;
+    return null;
+  }
+};
 
 const handleExport = async () => {
   if (!currentFile) {
@@ -185,11 +361,12 @@ const handleExport = async () => {
   }
 };
 
-fileInput.addEventListener("change", (event) => {
-  currentFile = event.target.files[0];
+fileInput.addEventListener("change", async (event) => {
+  currentFile = event.target.files[0] || null;
 
   if (!currentFile) {
     setHasPlot(false);
+    cachedDefaults = null;
 
     // Hide the image & revoke old blob if you do that:
     plotImage.classList.add("hidden");
@@ -201,27 +378,60 @@ fileInput.addEventListener("change", (event) => {
     // Show dashed border again when no file
     plotContainer.classList.remove("no-border");
 
-    // Optional: update any “file status” text if you added it
-    // fileStatus.textContent = "No file selected.";
+    updateFileStatus(null);
 
     return;
   }
 
-  // Optional: display file name
-  // fileStatus.textContent = `File uploaded: ${currentFile.name}`;
+  updateFileStatus(currentFile);
 
-  // As soon as a file is selected, generate the plot
-  plotRequest();
+  // Remove dashed border immediately once a file is picked
+  plotContainer.classList.add("no-border");
+
+  await fetchDefaults();
+  applyDefaults(Boolean(showMACheckbox?.checked));
+
+  // As soon as defaults are applied, generate the plot
+  await plotRequest();
 });
 
 
 
 controls.forEach((input) => {
+  if (input.dataset.param === "showMA") {
+    input.addEventListener("input", async () => {
+      if (!currentFile) return;
+      if (!cachedDefaults) {
+        await fetchDefaults();
+      }
+      applyDefaults(Boolean(showMACheckbox?.checked));
+      debouncedPlotRequest();
+    });
+    return;
+  }
   input.addEventListener("input", () => {
     if (!currentFile) return;
     debouncedPlotRequest();
   });
 });
+
+zoomInBtn?.addEventListener("click", () => {
+  if (plotImage.classList.contains("hidden")) return;
+  setZoom(zoomScale + ZOOM_STEP);
+});
+
+zoomOutBtn?.addEventListener("click", () => {
+  if (plotImage.classList.contains("hidden")) return;
+  setZoom(zoomScale - ZOOM_STEP);
+});
+
+if (plotImage) {
+  plotImage.addEventListener("pointerdown", startDrag);
+  plotImage.addEventListener("pointermove", handleDrag);
+  plotImage.addEventListener("pointerup", endDrag);
+  plotImage.addEventListener("pointercancel", endDrag);
+  plotImage.addEventListener("dragstart", (event) => event.preventDefault());
+}
 
 exportBtn.addEventListener("click", handleExport);
 
@@ -268,6 +478,8 @@ loadBtn.addEventListener("click", async () => {
   }
 });
 
+resetZoom();
 updateSavedList();
 setHasPlot(false);
 setLoading(false);
+updateFileStatus(null);
