@@ -1,4 +1,3 @@
-library(plyr)
 library(shiny)
 library(tidyverse)
 library(janitor)
@@ -6,42 +5,33 @@ library(scales)
 library(ggrepel)
 library(colorspace)
 library(shinyWidgets)
-library(colourpicker) 
+library(colourpicker)
+library(RColorBrewer)
 library(bslib)
+library(shinyjqui)
 library(ggplot2)
+library("gplots")
+library(rlang)
+library(magick)
+library(shinyjqui)
+library(sortable)
+#library(pheatmap)
 
 
-#install.packages('rsconnect')
-# install.packages("shiny")
-# install.packages("jsonlite")
-
-
-#copy to clipboard
-#add watermark
-
-
-
-convertUnits <- function(value, from, to) { # nolint
-  conversion_factors <- list(
-    "in" = 1,
-    "cm" = 2.54,
-    "mm" = 25.4
-  )
-  return(value * conversion_factors[[to]] / conversion_factors[[from]])
-}
-
+#have somethign where people can order how they want
+#change the color to match the website (heatmap)
+#have only up to 5 genes for title...
+#fill but make opaque the box plot
 
 ui <- fluidPage(
   theme = bs_theme(font_scale = 0.7),
   tags$style("font: 50px 'Arial', sans-serif;"),
   tags$style("[type ='text/css']  {font-size:8px;height:20px;}"),
   
-  titlePanel("Volcano/MA Plot Generator"),
-  
+  titlePanel("Gene Expression Visualization: Boxplots, Bar Graphs, and Heatmaps"),
   sidebarLayout(
     sidebarPanel(
-      tags$head(
-        tags$script(HTML("
+      tags$head(tags$script("
       var dimension = [0, 0];
       $(document).on('shiny:connected', function(e) {
         var plot = $('#plot'); // Ensure the ID matches your plotOutput ID
@@ -71,96 +61,107 @@ ui <- fluidPage(
       $(window).resize(function(e) {
         updateHeight();
       });
-    "))
-      ),
+    ")),
       style = "height: 90vh; overflow-y: auto;", 
       width = 3,
       tags$style("[type = 'number']  {font-size:14px;height:20px;}"),
       tags$style("[type = 'text']  {font-size:14px;height:20px;}"),
-      fileInput("file1", "Choose CSV or TXT File",
+      
+      fileInput("dataFile", "Upload data/normalized counts file (csv/txt):",
                 accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv", ".txt")),
-      checkboxInput("showMA", "Show MA Plot instead of Volcano Plot", FALSE),
+      fileInput("attributeFile", "Upload attributes file (csv/txt):",
+                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv", ".txt")),
       checkboxInput("advancedOptions", "Show advanced Options", FALSE),
-      # textInput("saveFilename", "Save Settings As", value = "settings.csv"),
-      # actionButton("saveSettings", "Save Settings"),
-      
-      
+      #fileInput("loadSettings", "Load Saved Settings:", accept = ".csv"),
       accordion(
         accordion_panel(
-          title = "Primary controls",
-          numericInput("fc_thresholdupreg", "Fold Change Threshold for Up Regulated Genes:", 1.5, min = 1),
-          numericInput("fc_thresholddownreg", "Fold Change Threshold for Down Regulated Genes :", -1.5, max = -1),
-          numericInput("p_val_threshold", "Adjusted p-value Threshold:", 0.05),
-          colourInput("line_color", "Color for threshold lines:", value = "black"),
+          "Primary controls",
+          radioButtons("plot_type", "Select Plot Type:", choices = c("Boxplot", "Bar Graph", "Heatmap")),
           
-          colourInput("up_color", "Color for up regulated genes:", value = "#75ba84"),
-          colourInput("down_color", "Color for downregulated genes:", value = "#c09ed6"),
-          colourInput("no_color", "Color for non-significant genes:", value = "#A8A8A8")
+          conditionalPanel(
+            condition = "input.plot_type != 'Heatmap'",  # Hide for Heatmap
+            checkboxInput("remove_x_axis_labels", "Remove X-axis Tick Labels", FALSE),
+          ),
+          
+          # Checkbox for error bars, shown only for Bar Graph
+          conditionalPanel(
+            condition = "input.plot_type == 'Bar Graph'",
+            checkboxInput("include_error_bars", "Include Error Bars", FALSE)
+          ),
+          
+          selectizeInput("selected_gene", "Select Genes:", choices = NULL, multiple = TRUE),
+          uiOutput("attributeColumnSelector"),
+          uiOutput("attributeValueSelector"),
+          uiOutput("groupByTimeCountUI"),
+          uiOutput("colorPicker"),
+          
+          # Conditional panel for groupByColumnSelector, which is shown for Boxplot and Bar Graph
+          conditionalPanel(
+            condition = "input.plot_type != 'Heatmap'",
+            uiOutput("groupByColumnSelector"), # Only show "Group by" if not Heatmap
+          ),
+          
+          # Conditional panel for value_order_ui, which is shown only for Boxplot
+          conditionalPanel(
+            condition = "input.plot_type == 'Boxplot'",
+            uiOutput("value_order_ui")  # Dynamically generated UI for order selection
+          ),
+          
+          # Conditional panel for value_order_ui_barplot, which is shown only for Bar Graph
+          conditionalPanel(
+            condition = "input.plot_type == 'Bar Graph'",
+            uiOutput("value_order_ui_barplot")
+          ),
+          
+          # Conditional panel for Heatmap-specific controls
+          conditionalPanel(
+            condition = "input.plot_type == 'Heatmap'",
+            selectInput("color_scheme", "Color Scheme:", choices = rownames(brewer.pal.info)),
+            checkboxInput("cluster_rows", "Cluster Rows", TRUE),
+            checkboxInput("cluster_columns", "Cluster Columns", TRUE)
+          )
         ),
         accordion_panel(
           "Axis controls",
-          numericInput("y_min", "Y-axis minimum value:", 0),
-          numericInput("y_max", "Y-axis maximum value:", 50),
-          numericInput("x_min", "X-axis minimum value:", -10),
-          numericInput("x_max", "X-axis maximum value:", 10),
           conditionalPanel(
-            condition = "input.advancedOptions == true",
-            numericInput("breakx", "X-axis Tick Interval:", 2),
-            numericInput("breaky", "Y-axis Tick Interval:", 10)
+            condition = "input.plot_type != 'Heatmap'",  # Hide for Heatmap
+            numericInput("y_min", "Y-axis minimum value:", 0, min = 0),
+            numericInput("y_max", "Y-axis maximum value:", 20),
+            conditionalPanel(
+              condition = "input.advancedOptions == true",
+              numericInput("breaky", "Y-axis Tick Interval:", 10)
+            ),
           ),
-          textInput("text_xaxis", "X-axis label:", value = "Log2 Fold Change"),
-          textInput("text_yaxis", "Y-axis label:", value = "-log10(p-val)"),
+          textInput("text_xaxis", "X-axis label:", value = ""),
+          textInput("text_yaxis", "Y-axis label:", value = "Log2 Normalized Counts"),
           numericInput("textlab_size_axis", "Text size for labels on axis:", 14)
         ),
         accordion_panel(
-          "Title and Labels controls",
+          "Title and Legend controls",
           textInput("title", "Plot title:", value = ""),
           textInput("subtitle", "Plot subtitle:", value = ""),
-          numericInput("textlab_size_title", "Text size for Title:", 25),
-          numericInput("textlab_size_subtitle", "Text size for subtitle:", 0),
+          numericInput("textlab_size_title", "Text size for Title:", 23),
+          numericInput("textlab_size_subtitle", "Text size for subtitle:", 18),
           textInput("legend_title", "Legend title:", value = "Legend"),
-          selectInput("legendPosition", "Legend Position:",
-                      choices = c("right", "left", "top", "bottom", "none")),
+          #uiOutput("legendPositionUI"),
+          conditionalPanel(
+            condition = "input.plot_type == 'Heatmap'",
+            selectInput("legendPositionHeat", "Legend Position (Heatmap):",
+                        choices = c("topright", "bottomleft","none")),
+          ),
+          
+          conditionalPanel(
+            condition = "input.plot_type != 'Heatmap'",
+            selectInput("legendPosition", "Legend Position:",
+                        choices = c("right", "left", "top", "bottom","none")),
+          ),
           numericInput("textlab_size_legend", "Text size for legend:", 14),
           numericInput("textlab_size_legend_content", "Text size for legend contents:", 14),
-          # Add these inputs for custom label editing
-          textInput("custom_upreg_text", "Custom Label for Up-regulated genes:", value = "Up"),
-          textInput("custom_downreg_text", "Custom Label for Down-regulated genes:", value = "Down"),
-          textInput("custom_nochange_text", "Custom Label for Non-significant genes:", value = "No Change"),
-          colourInput("textlab_color_axis", "Text color for labels:", value = "black"),
-        ),
-        accordion_panel(
-          "Points controls",
-          numericInput("point_size_UP", "Point Size for up regulated genes:", 1.5),
-          numericInput("point_size_DOWN", "Point Size for downregulated genes:", 1.5),
-          numericInput("point_size_NO", "Point Size for non diff. expressed genes:", 1.0),
-          conditionalPanel(
-            condition = "input.advancedOptions == true",
-            sliderInput("alpha_UP", "Transparency for up regulated genes:", min = 0, max = 1, value = 1),
-            sliderInput("alpha_DOWN", "Transparency for downregulated genes:", min = 0, max = 1, value = 1),
-            sliderInput("alpha_NO", "Transparency for non diff. expressed genes:", min = 0, max = 1, value = 0.25)
-          )
-        ),
-        accordion_panel(
-          "Genes to label",
-          textInput("label_gene_symbols", "Specific Gene Symbols to Label (comma-separated):", value = ""),
-          numericInput("top_genes", "Select the top x diff. expressed genes", value = 0, min = 0),
-          colourInput("up_color_selected", "Color for selected up regulated genes:", value = "#1B75BB"),
-          colourInput("down_color_selected", "Color for selected downregulated genes:", value = "#E62319"),
-          colourInput("no_color_selected", "Color for selected non diff. expressed genes:", value = "black"),
-          numericInput("point_size_selected", "Point Size for Selected Genes:", 3.0),
-          numericInput("text_size_pointlabs", "Text size for labels on points:", 12),
-          colourInput("text_color_pointlabs", "Text color for labels on points:", value = "black"),
-          conditionalPanel(
-            condition = "input.advancedOptions == true",
-            sliderInput("alpha_UPselected", "Transparency for Selected up regulated genes:", 1.0, min = 0, max = 1),
-            sliderInput("alpha_DOWNselected", "Transparency for Selected downregulated genes:", 1.0, min = 0, max = 1),
-            sliderInput("alpha_NOselected", "Transparency for Selected non diff. expressed genes:", 1.0, min = 0, max = 1)
-          )
+          colourInput("textlab_color_axis", "Text color for labels:", value = "black")
         ),
         accordion_panel(
           "Export plot",
-          textInput("file_name", "Output file name for the plot:", value = "volcano_plot"),
+          textInput("file_name", "Output file name for the plot:", value = ""),
           radioButtons("colormodel", "Color Model", choices = c("RGB", "CMYK")),
           uiOutput("file_type_ui"),
           numericInput("width", "Width of plot:", 11),
@@ -197,14 +198,18 @@ ui <- fluidPage(
       )
     ),
     mainPanel(
-      div(id = "plotContainer", style = "height: calc(100vh - 150px); overflow-y: auto;", 
-          plotOutput("plot", height = "100%" ))
+      div(
+        id = "plotContainer",
+        style = "height: calc(100vh - 150px); overflow-y: auto;",
+        imageOutput("plot", height = "100%")
+      )
     )
+    
   )
 )
 
-# Define server logic
-server <- function(input, output, session) { # nolint: cyclocomp_linter.
+server <- function(input, output, session) {
+  options(shiny.maxRequestSize = 30*1024^2)  # 30 MB
   
   # Function to save current inputs to a CSV file
   observeEvent(input$saveSettings, {
@@ -238,18 +243,38 @@ server <- function(input, output, session) { # nolint: cyclocomp_linter.
     # Read the CSV file
     loadedData <- read.csv(input$loadSettings$datapath, stringsAsFactors = FALSE)
     
-    # Update the inputs with the loaded values
+    # Update the attributeColumn first
+    if ("attributeColumn" %in% loadedData$variable) {
+      attribute_column_value <- loadedData$value[loadedData$variable == "attributeColumn"]
+      updateSelectInput(session, "attributeColumn", selected = attribute_column_value)
+    }
+    
+    # Delay the update of selectedValues to ensure attributeColumn has been updated
+    observe({
+      req(input$attributeColumn)
+      selected_values <- loadedData$value[loadedData$variable == "selectedValues"]
+      if (length(selected_values) > 0) {
+        selected_values <- strsplit(selected_values, ",")[[1]]
+        updateCheckboxGroupInput(session, "selectedValues", selected = selected_values)
+      }
+    })
+    
+    # Delay the update of selected_gene to ensure data and attributes are fully initialized
+    observe({
+      req(input$attributeColumn, input$selectedValues)
+      selected_genes <- loadedData$value[loadedData$variable == "selected_gene"]
+      if (length(selected_genes) > 0) {
+        selected_genes <- strsplit(selected_genes, ",")[[1]]
+        updateSelectizeInput(session, "selected_gene", selected = selected_genes)
+      }
+    })
+    
+    # Update the rest of the inputs
     lapply(seq_len(nrow(loadedData)), function(i) {
       var_name <- loadedData$variable[i]
       var_value <- loadedData$value[i]
       
-      # Convert back to the appropriate type if needed
-      if (grepl(",", var_value)) {
-        var_value <- strsplit(var_value, ",")[[1]]  # Split comma-separated values back into a vector
-      }
-      
-      # Update the input based on its type
-      if (var_name %in% names(input)) {
+      if (var_name != "attributeColumn" && var_name != "selectedValues" && var_name != "selected_gene" && var_name %in% names(input)) {
         if (is.numeric(input[[var_name]])) {
           updateNumericInput(session, var_name, value = as.numeric(var_value))
         } else if (is.character(input[[var_name]])) {
@@ -258,9 +283,8 @@ server <- function(input, output, session) { # nolint: cyclocomp_linter.
           updateCheckboxInput(session, var_name, value = as.logical(var_value))
         } else if (is.factor(input[[var_name]])) {
           updateSelectInput(session, var_name, selected = var_value)
-        } # Add other input types as needed
+        }
       }
-      
     })
     
     # Notify the user that the settings have been loaded
@@ -271,6 +295,8 @@ server <- function(input, output, session) { # nolint: cyclocomp_linter.
       footer = NULL
     ))
   })
+  
+  
   
   
   #for reactive file choices
@@ -298,496 +324,1053 @@ server <- function(input, output, session) { # nolint: cyclocomp_linter.
     }
   }, ignoreInit = TRUE)
   
-  options(shiny.maxRequestSize = 30*1024^2)  # 30 MB
   
-  
-  #read data, IMPORTANT  
+  #clean and read expression matrix 
   data <- reactive({
-    req(input$file1)
-    ext <- tools::file_ext(input$file1$datapath)
+    req(input$dataFile)
+    ext <- tools::file_ext(input$dataFile$datapath)
     
-    tryCatch({
-      df <- if (ext == 'txt') {
-        read_delim(input$file1$datapath) # nolint
-      } else if (ext == 'csv') {
-        read_csv(input$file1$datapath)
-      } else {
-        stop("Unsupported file type")
-      }
-      
-      # Clean the column names before checking
-      df <- df %>% clean_names()
-      
-      # Recheck if the uploaded file has the expected columns
-      expected_columns <- c("base_mean", "log2fold_change", "padj", "symbol", "gene_id")
-      if (!all(expected_columns %in% colnames(df))) {
-        stop("The uploaded file does not have the correct structure. Please ensure it contains the following columns: baseMean, log2FoldChange, padj, Symbol, GeneID")
-      }
-      
-      min_padj <- min(df$padj[df$padj > 0], na.rm = TRUE) # get smallest nonzero padj
-      
-      df <- df %>%
-        clean_names() %>%
-        mutate(padj = ifelse(padj == 0, (min_padj / 100), padj)) %>% # nolint
-        select(base_mean, log2fold_change, padj, symbol, gene_id) # nolint
-      
-      df$colordiff <- input$custom_nochange_text
-      df$colordiff[(df$log2fold_change >= log2(input$fc_thresholdupreg)) & (df$padj <= input$p_val_threshold)] <- input$custom_upreg_text
-      df$colordiff[(df$log2fold_change <= -log2(abs(input$fc_thresholddownreg))) & (df$padj <= input$p_val_threshold)] <- input$custom_downreg_text
-      
-      # Mark selected genes
-      if (!is.null(input$label_gene_symbols)) {
-        selected_genes <- unlist(strsplit(input$label_gene_symbols, ",\\s*"))
-        df <- df %>%
-          mutate(selected = ifelse(symbol %in% selected_genes, "SELECTED", "NOT_SELECTED"))
-      }
-      
-      # Update 'selected' column for partial matches
-      if (!is.null(input$partial_match) && input$partial_match != '') {
-        partial_patterns <- unlist(strsplit(input$partial_match, ",\\s*"))
-        combined_pattern <- paste0(partial_patterns, collapse = "|")
-        df <- df %>%
-          mutate(selected = ifelse(symbol %in% selected_genes | str_detect(symbol, combined_pattern), "SELECTED", "NOT_SELECTED"))
-      }
-      
-      # Select top differentially expressed genes if specified
-      if (input$top_genes > 0) {
-        top <- df %>%
-          top_n(input$top_genes, wt = abs(log2fold_change)) # nolint
-        df <- df %>%
-          mutate(selected = ifelse(symbol %in% top$symbol, "SELECTED", selected))
-      }
-      
-      # Update colordiff_selected and colordiff_nonselected based on user input
-      df <- df %>%
-        mutate(
-          colordiff_selected = ifelse(selected == "SELECTED",
-                                      ifelse(colordiff == input$custom_upreg_text,
-                                             paste0(input$custom_upreg_text, "_SELECTED"),
-                                             ifelse(colordiff == input$custom_downreg_text,
-                                                    paste0(input$custom_downreg_text, "_SELECTED"),
-                                                    paste0(input$custom_nochange_text, "_SELECTED"))),
-                                      colordiff),
-          colordiff_nonselected = ifelse(selected == "NOT_SELECTED", colordiff, colordiff)
-        )
-      
-      # # Initialize legend order if not set yet
-      # if (is.null(input$legend_order)) {
-      #   updateRankList(session, "legend_order", labels = unique(df$colordiff_nonselected))
-      # }
-      
-      # # Set the colordiff_nonselected column as a factor with levels specified by the user
-      # df$colordiff_nonselected <- factor(df$colordiff_nonselected, levels = input$legend_order)
-      
-      # Arrange the dataframe based on the reordered colordiff_nonselected
-      df <- df %>% arrange(colordiff_nonselected)
-      
-      removeNotification("file_error") # Remove the error notification if the file is correct
-      return(df)
-    }, error = function(e) {
-      showNotification(
-        paste("Error:", e$message),
-        type = "error",
-        duration = NULL,  # Keep the notification until the user dismisses it
-        id = "file_error" # Use an ID to ensure we can remove it later
+    # Read CSV or TXT
+    df <- if (ext == "txt") {
+      read_delim(input$dataFile$datapath)
+    } else if (ext == "csv") {
+      read_csv(input$dataFile$datapath)
+    } else {
+      stop("Unsupported file type")
+    }
+    
+    # Clean column names (spaces -> _, lower case, etc.)
+    df <- janitor::clean_names(df)
+    
+    # Try to detect the gene column automatically
+    gene_col <- names(df)[grepl("symbol|gene|gene_id|hgnc|ensembl|id",
+                                names(df), ignore.case = TRUE)][1]
+    
+    # Fallback: assume first column is the gene column
+    if (is.na(gene_col) || gene_col == "") {
+      gene_col <- names(df)[1]
+    }
+    
+    # Rename chosen gene column to 'Symbol' so the rest of the code can stay the same
+    df <- df %>%
+      rename(Symbol = all_of(gene_col)) %>%
+      mutate(across(where(is.numeric), round, 4))
+    
+    df
+  })
+  
+  #attribute df creation
+  attributes <- reactive({
+    req(input$attributeFile)
+    ext <- tools::file_ext(input$attributeFile$datapath)
+    
+    attri <- if (ext == "txt") {
+      readr::read_delim(input$attributeFile$datapath)
+    } else if (ext == "csv") {
+      readr::read_csv(input$attributeFile$datapath)
+    } else {
+      stop("Unsupported file type")
+    }
+    
+    # Clean column names
+    attri <- janitor::clean_names(attri)
+    
+    # Guess which column holds sample IDs
+    sample_col <- names(attri)[grepl("sample|sample_name|run|accession|library",
+                                     names(attri), ignore.case = TRUE)][1]
+    
+    if (is.na(sample_col) || sample_col == "") {
+      sample_col <- names(attri)[1]
+    }
+    
+    # Rename that column to 'sample_name'
+    attri <- attri %>%
+      dplyr::rename(sample_name = !!sample_col)
+    
+    # 🔑 Make sample_name values match the cleaned colnames from data():
+    # e.g., "Sample1" -> "sample1", "Sample 1" -> "sample_1"
+    attri <- attri %>%
+      dplyr::mutate(sample_name = janitor::make_clean_names(as.character(sample_name)))
+    
+    attri
+  })
+  
+  
+  
+  #selecting the gene
+  observe({
+    req(data())
+    genes <- unique(data()$Symbol)
+    names(genes) <- genes
+    updateSelectizeInput(session, "selected_gene", choices = genes, server = TRUE)
+  })
+  
+  # Updating the title to the gene(s) selected with a limit of 5 genes
+  observeEvent(input$selected_gene, {
+    selected_genes <- input$selected_gene
+    
+    if (length(selected_genes) > 5) {
+      displayed_genes <- paste(selected_genes[1:5], collapse = ", ")
+      title_text <- paste("Gene Expression for", displayed_genes, "...")
+    } else {
+      title_text <- paste("Gene Expression for", paste(selected_genes, collapse = ", "))
+    }
+    
+    updateTextInput(session, "title", value = title_text)
+  })
+  
+  #only display attribute columns with 2 or more distinct values
+  observe({
+    req(attributes())
+    
+    # Filter columns with at least 2 distinct values
+    valid_columns <- names(attributes())[sapply(attributes(), function(col) length(unique(col)) >= 2)]
+    
+    updateSelectInput(session, "attributeColumn", choices = valid_columns)
+  })
+  
+  #choices for the attribute column
+  output$attributeColumnSelector <- renderUI({
+    req(attributes())
+    selectInput("attributeColumn", "Select Attribute Column:", choices = names(attributes()))
+  })
+  
+  #selecting the attribute value
+  output$attributeValueSelector <- renderUI({
+    req(input$attributeColumn)
+    attribute_values <- unique(attributes()[[input$attributeColumn]])
+    
+    if (length(attribute_values) > 6) {
+      div(
+        style = "height: 150px; overflow-y: auto;",
+        checkboxGroupInput("selectedValues", "Select Attribute Values:", choices = attribute_values)
       )
-      return(NULL)
+    } else {
+      checkboxGroupInput("selectedValues", "Select Attribute Values:", choices = attribute_values)
+    }
+  })
+  
+  #Group By selector
+  output$groupByColumnSelector <- renderUI({
+    req(attributes(), input$attributeColumn)
+    
+    # Filter columns with at least 2 distinct values and exclude the selected attribute column
+    valid_columns <- names(attributes())[sapply(attributes(), function(col) length(unique(col)) >= 2)]
+    
+    # Remove the selected attribute column from the list of valid columns
+    valid_columns <- setdiff(valid_columns, input$attributeColumn)
+    
+    selectInput("groupByColumn", "Group by:", choices = c("", valid_columns), selected = "")
+  })
+  
+  #updates the attribute values based on the current selected attribute column
+  observeEvent(input$attributeColumn, {
+    updateCheckboxGroupInput(session, "selectedValues", choices = unique(attributes()[[input$attributeColumn]]))
+    updateCheckboxGroupInput(session, "selectedValues", selected = character(0))
+  })
+  
+  #update x-axis text to match selected column
+  observe({
+    updateTextInput(session, "text_xaxis", value = input$attributeColumn)
+  })
+  
+  #plot data IMPORTANT, this is the df that is actually used
+  plot_data <- reactive({
+    req(data(), attributes(), input$selected_gene, input$selectedValues)
+    
+    attribute_column <- input$attributeColumn
+    selected_samples <- attributes()$sample_name[attributes()[[attribute_column]] %in% input$selectedValues]
+    selected_attributes <- attributes() %>% filter(sample_name %in% selected_samples)
+    
+    if (input$groupByColumn != "") {
+      selected_attributes <- selected_attributes %>%
+        mutate(Group = paste(selected_attributes[[attribute_column]], selected_attributes[[input$groupByColumn]], sep = "_")) %>%
+        arrange(selected_attributes[[attribute_column]], selected_attributes[[input$groupByColumn]])
+    } else {
+      selected_attributes <- selected_attributes %>%
+        mutate(Group = selected_attributes[[attribute_column]])
+    }
+    
+    selected_data <- data() %>% filter(Symbol %in% input$selected_gene)
+    genes <- input$selected_gene
+    
+    long_data <- selected_data %>%
+      pivot_longer(cols = -Symbol, names_to = "sample_name", values_to = "NormalizedCounts") %>%
+      left_join(selected_attributes, by = "sample_name") 
+    
+    # Create Broad_Group by removing the time course information from Group
+    long_data <- long_data %>%
+      mutate(Broad_Group = sub("_\\d+ hr", "", Group))  # Adjust regex to fit your time course format
+    
+    long_data <- long_data %>%
+      mutate(Gene_Attribute = if (length(genes) >= 2) {
+        paste(Group, Symbol, sep = " - ")
+      } else {
+        Group  # Use only Group when one gene is selected
+      })
+    
+    # Create the Sample_Attribute column for the bar plot
+    long_data <- long_data %>%
+      mutate(Sample_Attribute = paste(sample_name, Symbol, sep = " - "))  # Concatenating sample_name and Symbol
+    
+    # Filter out rows with NA in the 'Gene_Attribute' or 'Group' columns
+    long_data <- long_data %>%
+      filter(!is.na(Gene_Attribute) & !is.na(Group))
+    
+    shiny::validate(
+      need(nrow(long_data) > 0, "No data available after filtering. Please check your data.")
+    )
+    
+    long_data
+  })
+  
+  #calculating y min and max
+  observeEvent(c(input$attributeColumn, input$selectedValues, input$selected_gene), {
+    long_data <- plot_data()
+    if (!is.null(long_data) && nrow(long_data) > 0 && !all(is.na(long_data$NormalizedCounts))) {
+      y_min_value <- floor(min(long_data$NormalizedCounts, na.rm = TRUE))
+      y_max_value <- ceiling(max(long_data$NormalizedCounts, na.rm = TRUE))
+      
+      updateNumericInput(session, "y_min", value = y_min_value)
+      updateNumericInput(session, "y_max", value = y_max_value)
+    }
+  })
+  
+  
+  # Color picker for boxplots, bar graphs, and heatmaps
+  output$colorPicker <- renderUI({
+    req(plot_data(), input$attributeColumn)
+    long_data <- plot_data()
+    
+    # Get unique group values
+    group_values <- unique(long_data$Broad_Group)
+    
+    # Ensure that n is at least 3
+    n_colors <- max(3, length(group_values))
+    
+    # Define a base color palette, ensuring it has enough colors
+    base_palette <- brewer.pal(min(n_colors, 9), "Set1")  # Get up to 9 colors from Set1
+    
+    # Generate the required number of colors using colorRampPalette
+    color_palette <- colorRampPalette(base_palette)(n_colors)
+    
+    # Create color pickers for each group
+    lapply(seq_along(group_values), function(i) {
+      group_value <- group_values[i]
+      sanitized_name <- make.names(group_value)
+      colourInput(
+        paste0("color_", sanitized_name), 
+        label = paste("Color for", group_value), 
+        value = color_palette[i]
+      )
     })
   })
   
   
   
-  # Helper function to update inputs for the volcano plot
-  updateVolcanoPlotInputs <- function(min_log2fc, max_log2fc, max_y, session) {
-    x_min_value <- if (floor(min_log2fc) < 0) floor(min_log2fc) else 0
-    
-    # Calculate breakx with the conditional logic
-    breakx_value <- floor((ceiling(max_log2fc) - x_min_value) / 5)
-    breakx_value <- ifelse(breakx_value > 0, breakx_value, 1)
-    
-    # Calculate breaky with the conditional logic
-    breaky_value <- floor((max_y + 0) / 5)
-    breaky_value <- ifelse(breaky_value > 0, breaky_value, 1)
-    
-    updateTextInput(session, "title", value = "Volcano Plot")
-    updateNumericInput(session, "y_min", value = 0)
-    updateNumericInput(session, "y_max", value = max_y)
-    updateNumericInput(session, "x_min", value = x_min_value)
-    updateNumericInput(session, "x_max", value = ceiling(max_log2fc))
-    updateTextInput(session, "text_xaxis", value = "Log2 Fold Change")
-    updateTextInput(session, "text_yaxis", value = "-log10(p-val)")
-    updateTextInput(session, "file_name", value = "volcano_plot")
-    updateNumericInput(session, "breakx", value = breakx_value)
-    updateNumericInput(session, "breaky", value = breaky_value)
-  }
+  # In the server function, add this to update the labels based on the selected plot type
   
-  
-  
-  # Helper function to update inputs for the MA plot
-  updateMAPlotInputs <- function(min_log2fc, max_log2fc, new_min_x, new_max_x, session) {
-    # Calculate breakx with the conditional logic
-    breakx_value <- floor((ceiling(new_max_x) - new_min_x) / 5)
-    breakx_value <- ifelse(breakx_value > 0, breakx_value, 1)
-    
-    # Calculate breaky with the conditional logic
-    breaky_value <- floor((max_log2fc - min_log2fc) / 5)
-    breaky_value <- ifelse(breaky_value > 0, breaky_value, 1)
-    
-    updateTextInput(session, "title", value = "MA Plot")
-    updateNumericInput(session, "y_min", value = min_log2fc)
-    updateNumericInput(session, "y_max", value = max_log2fc)
-    updateNumericInput(session, "x_min", value = new_min_x)
-    updateNumericInput(session, "x_max", value = ceiling(new_max_x))
-    updateTextInput(session, "text_xaxis", value = "Log2 Mean Expression")
-    updateTextInput(session, "text_yaxis", value = "Log2 Fold Change")
-    updateTextInput(session, "file_name", value = "MA_plot")
-    updateNumericInput(session, "breakx", value = breakx_value)
-    updateNumericInput(session, "breaky", value = breaky_value)
-  }
-  
-  
-  # Observe the file input and update default values accordingly
-  observeEvent(input$file1, {
-    df <- data()
-    min_log2fc <- min(df$log2fold_change, na.rm = TRUE)
-    max_log2fc <- max(df$log2fold_change, na.rm = TRUE)
-    
-    c <- df$base_mean
-    new_max_x <- min(mean(c, na.rm = TRUE) + 3 * sd(c, na.rm = TRUE), max(c, na.rm = TRUE))
-    new_min_x <- max(mean(c, na.rm = TRUE) - 3 * sd(c, na.rm = TRUE), min(c, na.rm = TRUE))
-    
-    min_padj <- min(df$padj[df$padj > 0], na.rm = TRUE)
-    max_y <- ceiling(-log10(min_padj) / 5) * 5
-    
-    # Conditional assignment for max_y
-    max_y <- ifelse(max_y == 0, 8, max_y)
-    
-    if (input$showMA) {
-      updateMAPlotInputs(floor(min_log2fc), ceiling(max_log2fc), floor(new_min_x), ceiling(new_max_x), session)
-    } else {
-      updateVolcanoPlotInputs(min_log2fc, max_log2fc, max_y, session)
+  observe({
+    if (input$plot_type == "Heatmap") {
+      updateTextInput(session, "text_xaxis", value = "Samples")
+      updateTextInput(session, "text_yaxis", value = "Genes")
     }
+  })
+  
+  # # UI for selecting the legend position
+  # output$legendPositionUI <- renderUI({
+  #   if (input$plot_type == "Heatmap") {
+  #     selectInput("legendPosition", "Legend Position:", choices = c("topright", "bottomleft"))
+  #   } else {
+  #     selectInput("legendPosition", "Legend Position:", choices = c("right", "left", "top", "bottom"))
+  #   }
+  # })
+  # 
+  # observeEvent(input$plot_type, {
+  #   if (input$plot_type == "Heatmap") {
+  #     updateSelectInput(session, "legendPosition", selected = "topright")
+  #   } else {
+  #     # Optionally, set a default legend position for other plot types
+  #     updateSelectInput(session, "legendPosition", selected = "right")
+  #   }
+  # })
+  # 
+  
+  
+  # Generate UI for value order selection based on Sample_Attribute for Bar Graph
+  output$value_order_ui_barplot <- renderUI({
+    req(plot_data(), input$plot_type == "Bar Graph")
+    
+    # Retrieve the filtered data based on the selected gene
+    long_data <- plot_data()
+    
+    # Extract the unique Sample_Attribute values
+    sample_values <- unique(long_data %>% pull(Sample_Attribute))
+    
+    tags$div(
+      class = "accordion", id = "accordionBarPlot",
+      tags$div(
+        class = "accordion-item",
+        tags$h2(
+          class = "accordion-header", id = "headingBarPlot",
+          tags$button(
+            class = "accordion-button collapsed", type = "button", 
+            "data-bs-toggle" = "collapse", "data-bs-target" = "#collapseBarPlot",
+            "aria-expanded" = "false", "aria-controls" = "collapseBarPlot",
+            "Click to reorder samples"
+          )
+        ),
+        tags$div(
+          id = "collapseBarPlot", class = "accordion-collapse collapse", 
+          "aria-labelledby" = "headingBarPlot", "data-bs-parent" = "#accordionBarPlot",
+          tags$div(
+            class = "accordion-body",
+            rank_list(
+              input_id = "value_order_barplot",
+              text = "Drag to reorder samples",
+              labels = sample_values
+            )
+          )
+        )
+      )
+    )
   })
   
   
   
+  #Generate UI for value order selection based on chosen attribute
+  output$value_order_ui <- renderUI({
+    req(plot_data(), input$attributeColumn)
+    
+    # Retrieve the filtered data based on the selected gene
+    long_data <- plot_data()
+    
+    # Extract the unique Gene_Attribute values for the selected gene
+    attribute_values <- unique(long_data %>% pull(Gene_Attribute))
+    
+    tags$div(
+      class = "accordion", id = "accordionExample",
+      tags$div(
+        class = "accordion-item",
+        tags$h2(
+          class = "accordion-header", id = "headingOne",
+          tags$button(
+            class = "accordion-button collapsed", type = "button", 
+            "data-bs-toggle" = "collapse", "data-bs-target" = "#collapseOne",
+            "aria-expanded" = "false", "aria-controls" = "collapseOne",
+            "Click to reorder values"
+          )
+        ),
+        tags$div(
+          id = "collapseOne", class = "accordion-collapse collapse", 
+          "aria-labelledby" = "headingOne", "data-bs-parent" = "#accordionExample",
+          tags$div(
+            class = "accordion-body",
+            rank_list(
+              input_id = "value_order",
+              text = "Drag to reorder values",
+              labels = attribute_values
+            )
+          )
+        )
+      )
+    )
+  })
   
-  # Observe the showMA checkbox and update inputs accordingly
-  observeEvent(input$showMA, {
-    df <- data()
+  observeEvent(input$plot_type, {
     
-    
-    min_log2fc <- min(df$log2fold_change, na.rm = TRUE)
-    max_log2fc <- max(df$log2fold_change, na.rm = TRUE)
-    
-    c <-df$base_mean
-    new_max_x <- min(mean(c,na.rm = T)+3*sd(c,na.rm = T), max(c,na.rm = T))
-    new_min_x <- max(mean(c,na.rm = T)-3*sd(c,na.rm = T), min(c,na.rm = T))
-    
-    min_padj <- min(df$padj[df$padj > 0], na.rm = TRUE)
-    max_y <- ceiling(-log10(min_padj) / 5) * 5
-    
-    # Conditional assignment for max_y
-    max_y <- ifelse(max_y == 0, 8, max_y)
-    
-    if (input$showMA) {
-      updateMAPlotInputs(floor(min_log2fc), ceiling(max_log2fc), floor(new_min_x), ceiling(new_max_x), session)
-    } else {
-      updateVolcanoPlotInputs(min_log2fc, max_log2fc, max_y, session)
+    if(input$plot_type == "Boxplot"){
+      updateTextInput(session, "file_name", value = "Boxplot")
+    }else if (input$plot_type == "Bar Graph"){
+      updateTextInput(session, "file_name", value = "Bar Graph")
+    }else{
+      updateTextInput(session, "file_name", value = "Heatmap")
     }
+    
   })
   
   
-  width <- reactive({
-    width_units <- input$width
-    if (input$units == "in") {
-      width_units * input$dpi
-    } else if (input$units == "cm") {
-      width_units * input$dpi / 2.54
-    } else if (input$units == "mm") {
-      width_units * input$dpi / 25.4
-    } else {
-      width_units
-    }
-  })
   
-  height <- reactive({
-    height_units <- input$height
-    if (input$units == "in") {
-      height_units * input$dpi
-    } else if (input$units == "cm") {
-      height_units * input$dpi / 2.54
-    } else if (input$units == "mm") {
-      height_units * input$dpi / 25.4
-    } else {
-      height_units
-    }
-  })
-  
-  
-  
-  
-  
-  
-  # Reactive expression to generate the plot
+  #generatin the image for the mainpanel
   output$plot <- renderImage({
-    df <- data()
+    long_data <- plot_data()
     legendPosition <- input$legendPosition
-    req(df) # Ensure df is not NULL
-    
-    # Define colors, sizes, and alphas for selected and non-selected points
-    cols_selected <- c(
-      setNames(input$up_color_selected, paste0(input$custom_upreg_text, "_SELECTED")),
-      setNames(input$down_color_selected, paste0(input$custom_downreg_text, "_SELECTED")),
-      setNames(input$no_color_selected, paste0(input$custom_nochange_text, "_SELECTED"))
-    )
-    
-    sizes_selected <- c(
-      setNames(input$point_size_selected, paste0(input$custom_upreg_text, "_SELECTED")),
-      setNames(input$point_size_selected, paste0(input$custom_downreg_text, "_SELECTED")),
-      setNames(input$point_size_selected, paste0(input$custom_nochange_text, "_SELECTED"))
-    )
-    
-    alphas_selected <- c(
-      setNames(input$alpha_UPselected, paste0(input$custom_upreg_text, "_SELECTED")),
-      setNames(input$alpha_DOWNselected, paste0(input$custom_downreg_text, "_SELECTED")),
-      setNames(input$alpha_NOselected, paste0(input$custom_nochange_text, "_SELECTED"))
-    )
-    
-    cols_nonselected <- c(
-      setNames(input$up_color, input$custom_upreg_text),
-      setNames(input$down_color, input$custom_downreg_text),
-      setNames(input$no_color, input$custom_nochange_text)
-    )
-    
-    sizes_nonselected <- c(
-      setNames(input$point_size_UP, input$custom_upreg_text),
-      setNames(input$point_size_DOWN, input$custom_downreg_text),
-      setNames(input$point_size_NO, input$custom_nochange_text)
-    )
-    
-    alphas_nonselected <- c(
-      setNames(input$alpha_UP, input$custom_upreg_text),
-      setNames(input$alpha_DOWN, input$custom_downreg_text),
-      setNames(input$alpha_NO, input$custom_nochange_text)
-    )
-    
-    
-    # Set the colordiff_nonselected column as a factor with levels specified by the user
-    # df$colordiff_nonselected <- factor(df$colordiff_nonselected, levels = input$legend_order)
-    
-    # # Arrange the dataframe based on the reordered colordiff_nonselected
-    # df <- df %>% arrange(colordiff_nonselected)
-    
-    view(df)
-    # Generate plot based on whether MA plot or Volcano plot is selected
-    if(input$showMA){
-      p <- ggplot(df, aes(x = base_mean, y = log2fold_change)) +
-        geom_point(data = subset(df, selected == "NOT_SELECTED"),
-                   aes(color = colordiff_nonselected, size = colordiff_nonselected, alpha = colordiff_nonselected)) +
-        geom_point(data = subset(df, selected == "SELECTED"),
-                   aes(fill = colordiff_selected, size = colordiff_selected, alpha = colordiff_selected), 
-                   color = "black", shape = 21, show.legend = FALSE) +
-        geom_hline(yintercept = c(-log2(abs(input$fc_thresholddownreg)), log2(input$fc_thresholdupreg)), 
-                   linetype = "dashed", color = input$line_color) +
-        scale_x_continuous(breaks = seq(input$x_min, input$x_max, input$breakx), limits = c(input$x_min, input$x_max)) +
-        scale_y_continuous(breaks = seq(input$y_min, input$y_max, input$breaky), limits = c(input$y_min, input$y_max)) +
-        scale_color_manual(values = cols_nonselected, name = input$legend_title) +
-        scale_fill_manual(values = cols_selected, name = "Selected Genes") +
-        scale_alpha_manual(values = c(alphas_nonselected, alphas_selected)) +
-        scale_size_manual(values = c(sizes_nonselected, sizes_selected)) +
-        theme_bw() +
-        theme(
-          text = element_text(color = input$textlab_color_axis),
-          legend.title = element_text(size = input$textlab_size_legend),
-          legend.text = element_text(size = input$textlab_size_legend_content),
-          plot.title = element_text(size = input$textlab_size_title),
-          plot.subtitle = element_text(size = input$textlab_size_subtitle),
-          axis.title = element_text(size = input$textlab_size_axis),
-          axis.text = element_text(size = input$textlab_size_axis),
-          legend.position = legendPosition
-        ) +
-        labs(x = input$text_xaxis, y = input$text_yaxis, title = input$title, subtitle = input$subtitle) +
-        guides(
-          color = guide_legend(override.aes = list(alpha = alphas_nonselected[1], size = sizes_nonselected[1])),
-          fill = "none",
-          alpha = "none",
-          size = "none"
-        )
-    } else {
-      p <- ggplot(df, aes(x = log2fold_change, y = -log10(padj))) +
-        geom_point(data = subset(df, selected == "NOT_SELECTED"), 
-                   aes(color = colordiff_nonselected, size = colordiff_nonselected, alpha = colordiff_nonselected)) +
-        geom_point(data = subset(df, selected == "SELECTED"), 
-                   aes(fill = colordiff_selected, size = colordiff_selected, alpha = colordiff_selected), 
-                   color = "black", shape = 21, show.legend = FALSE) +
-        geom_vline(xintercept = c(-log2(abs(input$fc_thresholddownreg)), log2(input$fc_thresholdupreg)), 
-                   linetype = "dashed", color = input$line_color) +
-        geom_hline(yintercept = -log10(input$p_val_threshold), linetype = "dashed", color = input$line_color) +
-        scale_x_continuous(breaks = seq(input$x_min, input$x_max, input$breakx), limits = c(input$x_min, input$x_max)) + #error
-        scale_y_continuous(breaks = seq(input$y_min, input$y_max, input$breaky), limits = c(input$y_min, input$y_max)) +
-        scale_color_manual(values = cols_nonselected, name = input$legend_title) +
-        scale_fill_manual(values = cols_selected, name = "Selected Genes") +
-        scale_alpha_manual(values = c(alphas_nonselected, alphas_selected)) +
-        scale_size_manual(values = c(sizes_nonselected, sizes_selected)) +
-        theme_bw() +
-        theme(
-          text = element_text(color = input$textlab_color_axis),
-          legend.title = element_text(size = input$textlab_size_legend),
-          legend.text = element_text(size = input$textlab_size_legend_content),
-          plot.title = element_text(size = input$textlab_size_title),
-          plot.subtitle = element_text(size = input$textlab_size_subtitle),
-          axis.title = element_text(size = input$textlab_size_axis),
-          axis.text = element_text(size = input$textlab_size_axis),
-          legend.position = legendPosition
-        ) +
-        labs(x = input$text_xaxis, y = input$text_yaxis, title = input$title, subtitle = input$subtitle) +
-        guides(
-          color = guide_legend(override.aes = list(alpha = alphas_nonselected[1], size = sizes_nonselected[1])),
-          fill = "none",
-          alpha = "none",
-          size = "none"
-        )
+    if (nrow(long_data) == 0) {
+      showNotification("No data available for plotting. Check your data selection or filtering criteria.", type = "error")
+      return(NULL)
     }
     
-    # Label specific gene symbols
-    if (!is.null(input$label_gene_symbols)) {
-      selected_genes <- unlist(strsplit(input$label_gene_symbols, ",\\s*"))
-      p <- p + geom_label_repel(data = df %>% filter(symbol %in% selected_genes), 
-                                aes(label = symbol, color = colordiff), 
-                                size = (input$text_size_pointlabs / .pt), 
-                                color = input$text_color_pointlabs, 
-                                max.overlaps = Inf, nudge_x = 0.5)
+    if (all(is.na(long_data$NormalizedCounts))) {
+      showNotification("NormalizedCounts contains only NA values. Please check the data for the selected gene.", type = "error")
+      return(NULL)
     }
     
-    # Label genes matching partial string
-    if (!is.null(input$partial_match) && input$partial_match != '') {
-      partial_patterns <- unlist(strsplit(input$partial_match, ",\\s*"))
-      combined_pattern <- paste0(partial_patterns, collapse = "|")
-      partial_genes <- df %>% filter(str_detect(symbol, combined_pattern))
-      p <- p + geom_label_repel(data = partial_genes, 
-                                aes(label = symbol, color = colordiff), 
-                                size = (input$text_size_pointlabs / .pt), 
-                                color = input$text_color_pointlabs, 
-                                max.overlaps = Inf, nudge_x = 0.5)
-    }
-    
-    # Label top N genes by absolute log2fold_change
-    if(input$top_genes > 0){
-      top <- df %>% top_n(input$top_genes, wt = abs(log2fold_change))
-      p <- p + geom_label_repel(data = top, 
-                                aes(label = symbol, color = colordiff), 
-                                size = (input$text_size_pointlabs / .pt), 
-                                color = input$text_color_pointlabs, 
-                                max.overlaps = Inf, nudge_x = 0.5)
-    }
-    
-    width_px_max = input$dimension[1]
-    height_px_max = input$dimension[2]
-    ratio_export = input$width / input$height
-    
-    new_height_px = height_px_max
-    new_width_px = height_px_max * ratio_export
-    if (new_width_px > width_px_max) {
-      new_width_px = width_px_max
-      new_height_px = width_px_max / ratio_export
-    }
-    
-    # Save the plot to a temporary file
-    tmpfile <- tempfile(fileext = ".png")
-    ggsave(tmpfile, plot = p, width = reactive({
-      width_units <- input$width
-      if (input$units == "in") {
-        width_units
-      } else if (input$units == "cm") {
-        width_units / 2.54
-      } else if (input$units == "mm") {
-        width_units / 25.4
-      } else {
-        width_units / input$dpi
+    if (input$plot_type == "Heatmap") {
+      
+      # Combine all data associated with the same Symbol
+      heatmap_data <- plot_data() %>%
+        group_by(Symbol, sample_name) %>%
+        summarise(NormalizedCounts = mean(NormalizedCounts, na.rm = TRUE)) %>%
+        spread(key = "sample_name", value = NormalizedCounts)
+      
+      # Convert to a proper data frame and ensure it's numeric
+      heatmap_data <- as.data.frame(heatmap_data)
+      rownames(heatmap_data) <- heatmap_data$Symbol
+      heatmap_data <- heatmap_data[, -1]  # Remove the 'Symbol' column
+      
+      view(heatmap_data)
+      
+      # Check and handle NA values
+      if (any(is.na(heatmap_data))) {
+        showNotification("NA values detected in heatmap data. Handling NA values by replacing them with 0.", type = "warning")
+        heatmap_data[is.na(heatmap_data)] <- 0
       }
-    })(), height = reactive({
-      height_units <- input$height
-      if (input$units == "in") {
-        height_units
-      } else if (input$units == "cm") {
-        height_units / 2.54
-      } else if (input$units == "mm") {
-        height_units / 25.4
-      } else {
-        height_units / input$dpi
+      
+      # Create annotation data frame for the selected attribute values
+      annotation_col <- plot_data() %>%
+        select(sample_name, Group) %>%
+        unique() %>%
+        column_to_rownames(var = "sample_name")  # Set sample_name as row names
+      
+      
+      
+      # Ensure the order of columns in heatmap_data matches annotation_col
+      annotation_col <- annotation_col[match(colnames(heatmap_data), rownames(annotation_col)), , drop = FALSE]
+      
+      # Ensure annotation_col is a factor or appropriate type for annotation
+      
+      annotation_col$Group <- factor(annotation_col$Group)
+      view(annotation_col)
+      
+      # # Define colors for the heatmap
+      # color_palette <- colorRampPalette(brewer.pal(9, input$color_scheme))(100)
+      
+      # Define colors for the heatmap
+      color_palette <- colorRampPalette(brewer.pal(9, input$color_scheme))(100)
+      
+      
+      # Extract unique Broad_Group values
+      broad_groups <- unique(long_data$Broad_Group)
+      # Retrieve selected colors from the color pickers, based on Broad_Group
+      selected_colors <- sapply(broad_groups, function(Broad_Group) {
+        input[[paste0("color_", make.names(Broad_Group))]]
+      })
+      names(selected_colors) <- broad_groups
+      
+      ColSideColors <- selected_colors[as.character(annotation_col$Group)]
+      
+      # Save the heatmap to a temporary file
+      tmpfile <- tempfile(fileext = ".png")
+      png(tmpfile, width = input$width, height = input$height, units = input$units, res = input$dpi)  # Open a PNG device to save the plot
+      
+      # Apply size settings
+      title_size <- input$textlab_size_title
+      subtitle_size <- input$textlab_size_subtitle
+      legend_title_size <- input$textlab_size_legend
+      legend_content_size <- input$textlab_size_legend_content
+      axis_label_size <- input$textlab_size_axis
+      
+      # lwid=c(0.5,5) #make column of dendrogram and key very small and other colum very big 
+      # lhei=c(3,3) #make row of key and other dendrogram very small and other row big. 
+      
+      heatmap.2(
+        as.matrix(heatmap_data),
+        Colv = if(input$cluster_columns) TRUE else FALSE,  # Cluster columns based on user input
+        Rowv = if(input$cluster_rows) TRUE else FALSE,     # Cluster rows based on user input
+        col = color_palette,               # Use the color palette
+        ColSideColors = ColSideColors,     # Color columns based on groups
+        labRow = rownames(heatmap_data),   # Label rows with gene symbols
+        labCol = colnames(heatmap_data),   # Label columns with sample names
+        scale = "none",                    # No scaling applied
+        margins = c(10, 13),               # Adjust margins for better readability
+        cexCol = axis_label_size / 14,     # Adjust the size of the column labels
+        cexRow = axis_label_size / 14,     # Adjust the size of the row labels
+        trace = "none",                    # Remove traces inside the heatmap cells
+        xlab = input$text_xaxis,
+        ylab = input$text_yaxis,
+        main = NULL,
+        # lwid = lwid,
+        # lhei = lhei
+      )
+      
+      # # Manually add the title with a specific size
+      # title(
+      #   main = input$title,
+      #   cex.main = input$textlab_size_title / 14,  # Adjust the size of the title
+      #   line = 2
+      # )
+      
+      if (input$legendPositionHeat != "none") {
+        legend(
+          x = input$legendPositionHeat,
+          legend = names(selected_colors), # Labels for each group
+          col = selected_colors, # Colors for each group
+          pch = 15, # Square symbols
+          pt.cex = 1.5, # Size of the symbols
+          cex = legend_content_size / 14, # Size of the legend text
+          title = input$legend_title, # Title of the legend
+          title.cex = legend_title_size / 14 # Adjust legend title size
+        )
       }
-    })(), dpi = input$dpi)
-    
-    # Return the temporary file path and dimensions
-    list(
-      src = tmpfile,
-      contentType = "image/png",
-      width = reactive({
-        width_units <- input$width
-        width_pixels <- if (input$units == "in") {
-          width_units * input$dpi
-        } else if (input$units == "cm") {
-          width_units * input$dpi / 2.54
-        } else if (input$units == "mm") {
-          width_units * input$dpi / 25.4
-        } else {
-          width_units
+      
+      
+      #   bty = "n", # No box around the legend
+      dev.off()  # Close the PNG devices
+      
+      ###Just creating the correct temp file
+      
+      
+      
+      # Determine the dimensions for the output image
+      width_px_max <- input$dimension[1]
+      height_px_max <- input$dimension[2]
+      ratio_export <- input$width / input$height
+      
+      new_height_px <- height_px_max
+      new_width_px <- height_px_max * ratio_export
+      if (new_width_px > width_px_max) {
+        new_width_px <- width_px_max
+        new_height_px <- width_px_max / ratio_export
+      }
+      
+      # Return the temporary file path and dimensions for the heatmap
+      return(list(
+        src = tmpfile,
+        contentType = "image/png",
+        width = min(input$width * input$dpi, new_width_px * input$zoom),
+        height = min(input$height * input$dpi, new_height_px * input$zoom)
+      ))
+    }else {
+      # Grouping data and calculating stats
+      long_data <- long_data %>%
+        group_by(Gene_Attribute) %>%
+        mutate(
+          Q1 = quantile(NormalizedCounts, 0.25, na.rm = TRUE),
+          Q3 = quantile(NormalizedCounts, 0.75, na.rm = TRUE),
+          Min = min(NormalizedCounts, na.rm = TRUE),
+          Max = max(NormalizedCounts, na.rm = TRUE),
+          SD = sd(NormalizedCounts, na.rm = TRUE)
+        )
+      
+      
+      # Extract unique Broad_Group values
+      broad_groups <- unique(long_data$Broad_Group)
+      
+      # Retrieve selected colors from the color pickers, based on Broad_Group
+      selected_colors <- sapply(broad_groups, function(Broad_Group) {
+        input[[paste0("color_", make.names(Broad_Group))]]
+      })
+      names(selected_colors) <- broad_groups
+      
+      # Apply different ordering and plotting logic based on plot type
+      if (input$plot_type == "Boxplot") {
+        long_data <- long_data %>%
+          arrange(Gene_Attribute, Group)
+        # Set the Gene_Attribute column as a factor with levels specified by the user
+        long_data$Gene_Attribute <- factor(long_data$Gene_Attribute, levels = input$value_order)
+        
+        # Generate the plot
+        p <- ggplot(data = long_data, aes(x = Gene_Attribute, y = NormalizedCounts, fill = Broad_Group)) +
+          geom_boxplot(outlier.shape = NA, color = "darkgray", alpha = 0.75) +
+          stat_boxplot(geom = "errorbar", width = 0.5, color = "darkgray") +
+          geom_jitter(width = 0.2, size = 1.5, color = "black") +
+          labs(x = input$text_xaxis, y = input$text_yaxis, title = input$title, subtitle = input$subtitle, fill = input$legend_title) +
+          theme_bw() +
+          theme(
+            axis.text.x = if (input$remove_x_axis_labels) element_blank() else element_text(angle = 90, hjust = 1),
+            axis.ticks.x = if (input$remove_x_axis_labels) element_blank() else element_line(),
+            text = element_text(color = input$textlab_color_axis),
+            legend.title = element_text(size = input$textlab_size_legend),
+            legend.text = element_text(size = input$textlab_size_legend_content),
+            plot.title = element_text(size = input$textlab_size_title),
+            plot.subtitle = element_text(size = input$textlab_size_subtitle),
+            axis.title = element_text(size = input$textlab_size_axis),
+            axis.text = element_text(size = input$textlab_size_axis),
+            legend.position =  input$legendPosition 
+          ) +
+          scale_fill_manual(values = selected_colors, name = input$legend_title) +
+          guides(fill = guide_legend(title = input$legend_title)) +
+          ylim(input$y_min, input$y_max)
+        
+        # Conditionally apply faceting based on the selected groupByColumn
+        if (input$groupByColumn != "") {
+          facet_formula <- as.formula(paste(". ~", input$groupByColumn))
+          p <- p + facet_wrap(facet_formula, scales = "free")
         }
-        min(width_pixels, new_width_px * input$zoom) #min width of window/main panel, calcutlate this and put in, add input "zoom"
-      })(),
-      height = reactive({
-        height_units <- input$height
-        height_pixels <- if (input$units == "in") {
-          height_units * input$dpi
-        } else if (input$units == "cm") {
-          height_units * input$dpi / 2.54
-        } else if (input$units == "mm") {
-          height_units * input$dpi / 25.4
-        } else {
-          height_units
+        
+      } else if (input$plot_type == "Bar Graph") {
+        long_data <- long_data %>%
+          arrange(Sample_Attribute)
+        
+        # Set the Sample_Attribute column as a factor with levels specified by the user
+        long_data$Sample_Attribute <- factor(long_data$Sample_Attribute, levels = input$value_order_barplot)
+        
+        # Generate the plot
+        p <- ggplot(data = long_data, aes(x = Sample_Attribute, y = NormalizedCounts, fill = Broad_Group)) +
+          geom_bar(stat = "identity", position = "dodge") +
+          labs(x = input$text_xaxis, y = input$text_yaxis, title = input$title, subtitle = input$subtitle, fill = input$legend_title) +
+          theme_bw() +
+          theme(
+            axis.text.x = if (input$remove_x_axis_labels) element_blank() else element_text(angle = 90, hjust = 1),
+            axis.ticks.x = if (input$remove_x_axis_labels) element_blank() else element_line(),
+            text = element_text(color = input$textlab_color_axis),
+            legend.title = element_text(size = input$textlab_size_legend),
+            legend.text = element_text(size = input$textlab_size_legend_content),
+            plot.title = element_text(size = input$textlab_size_title),
+            plot.subtitle = element_text(size = input$textlab_size_subtitle),
+            axis.title = element_text(size = input$textlab_size_axis),
+            axis.text = element_text(size = input$textlab_size_axis),
+            legend.position = input$legendPosition
+          ) +
+          scale_fill_manual(values = selected_colors, name = input$legend_title) +
+          guides(fill = guide_legend(title = input$legend_title)) +
+          ylim(0, input$y_max)
+        
+        # Add error bars if selected
+        if (input$include_error_bars) {
+          p <- p + geom_errorbar(aes(ymin = NormalizedCounts - SD, ymax = NormalizedCounts + SD),
+                                 width = 0.25,  # Adjust the width of the error bars
+                                 position = position_dodge(width = 0.9))  # Ensure the error bars are positioned correctly
         }
-        min(height_pixels, new_height_px* input$zoom)
-      })()
-    )
-  }, deleteFile = TRUE)
+        
+        # Conditionally apply faceting based on the selected groupByColumn
+        if (input$groupByColumn != "") {
+          facet_formula <- as.formula(paste(". ~", input$groupByColumn))
+          p <- p + facet_wrap(facet_formula, scales = "free")
+        }
+      }
+      
+      
+      
+      width_px_max = input$dimension[1]
+      height_px_max = input$dimension[2]
+      ratio_export = input$width / input$height
+      
+      new_height_px = height_px_max
+      new_width_px = height_px_max * ratio_export
+      if (new_width_px > width_px_max) {
+        new_width_px = width_px_max
+        new_height_px = width_px_max / ratio_export
+      }
+      
+      # Save the plot to a temporary file
+      tmpfile <- tempfile(fileext = ".png")
+      ggsave(tmpfile, plot = p, width = input$width, height = input$height, units = input$units, dpi = input$dpi)
+      
+      # Return the temporary file path and dimensions
+      list(
+        src = tmpfile,
+        contentType = "image/png",
+        width = min(input$width * input$dpi, new_width_px * input$zoom),
+        height = min(input$height * input$dpi, new_height_px * input$zoom)
+      )
+    }
+  },deleteFile=TRUE)
   
   
-  
-  
-  # Download handler for the plot
   output$downloadPlot <- downloadHandler(
     filename = function() {
       paste(input$file_name, ".", input$file_type, sep = "")
     },
     content = function(file) {
-      if (input$colormodel == "CMYK") {
-        if (input$file_type == "pdf") {
-          pdf(file, width = input$width, height = input$height, colormodel = "cmyk") # nolint: line_length_linter.
-        } else if (input$file_type == "eps") {
-          postscript(file, width = input$width, height = input$height, colormodel = "cmyk")
-        } else if (input$file_type == "tiff") {
-          # Generate a temporary PNG in RGB colorspace
-          temp_file <- tempfile(fileext = ".png")
+      if (input$plot_type == "Heatmap") {
+        if (input$colormodel == "CMYK" && input$file_type == "tiff") {
+          # Step 1: Generate a TIFF in RGB colorspace
+          rgb_tiff_file <- tempfile(fileext = ".tiff")
+          tiff(rgb_tiff_file, width = input$width, height = input$height, units = input$units, res = input$dpi)
           
-          ggsave(temp_file, plot = last_plot(), width = input$width, height = input$height, dpi = input$dpi)
+          # Reuse the same logic from the renderImage function to generate the heatmap
+          long_data <- plot_data()
+          if (nrow(long_data) == 0 || all(is.na(long_data$NormalizedCounts))) {
+            return(NULL)
+          }
           
+          # Combine all data associated with the same Symbol
+          heatmap_data <- plot_data() %>%
+            group_by(Symbol, sample_name) %>%
+            summarise(NormalizedCounts = mean(NormalizedCounts, na.rm = TRUE)) %>%
+            spread(key = "sample_name", value = NormalizedCounts)
+          
+          # Convert to a proper data frame and ensure it's numeric
+          heatmap_data <- as.data.frame(heatmap_data)
+          rownames(heatmap_data) <- heatmap_data$Symbol
+          heatmap_data <- heatmap_data[, -1]  # Remove the 'Symbol' column
+          
+          view(heatmap_data)
+          
+          # Check and handle NA values
+          if (any(is.na(heatmap_data))) {
+            showNotification("NA values detected in heatmap data. Handling NA values by replacing them with 0.", type = "warning")
+            heatmap_data[is.na(heatmap_data)] <- 0
+          }
+          
+          # Create annotation data frame for the selected attribute values
+          annotation_col <- plot_data() %>%
+            select(sample_name, Group) %>%
+            unique() %>%
+            column_to_rownames(var = "sample_name")  # Set sample_name as row names
+          
+          
+          
+          # Ensure the order of columns in heatmap_data matches annotation_col
+          annotation_col <- annotation_col[match(colnames(heatmap_data), rownames(annotation_col)), , drop = FALSE]
+          
+          # Ensure annotation_col is a factor or appropriate type for annotation
+          
+          annotation_col$Group <- factor(annotation_col$Group)
+          view(annotation_col)
+          
+          # Define colors for the heatmap
+          color_palette <- colorRampPalette(brewer.pal(9, input$color_scheme))(100)
+          
+          # Extract unique Broad_Group values
+          broad_groups <- unique(long_data$Broad_Group)
+          # Retrieve selected colors from the color pickers, based on Broad_Group
+          selected_colors <- sapply(broad_groups, function(Broad_Group) {
+            input[[paste0("color_", make.names(Broad_Group))]]
+          })
+          names(selected_colors) <- broad_groups
+          
+          ColSideColors <- selected_colors[as.character(annotation_col$Group)]
+          
+          # Apply size settings
+          title_size <- input$textlab_size_title
+          subtitle_size <- input$textlab_size_subtitle
+          legend_title_size <- input$textlab_size_legend
+          legend_content_size <- input$textlab_size_legend_content
+          axis_label_size <- input$textlab_size_axis
+          
+          # lwid=c(0.5,5) #make column of dendrogram and key very small and other colum very big 
+          # lhei=c(3,3) #make row of key and other dendrogram very small and other row big. 
+          
+          heatmap.2(
+            as.matrix(heatmap_data),
+            Colv = if(input$cluster_columns) TRUE else FALSE,  # Cluster columns based on user input
+            Rowv = if(input$cluster_rows) TRUE else FALSE,     # Cluster rows based on user input
+            col = color_palette,               # Use the color palette
+            ColSideColors = ColSideColors,     # Color columns based on groups
+            labRow = rownames(heatmap_data),   # Label rows with gene symbols
+            labCol = colnames(heatmap_data),   # Label columns with sample names
+            scale = "none",                    # No scaling applied
+            margins = c(10, 13),               # Adjust margins for better readability
+            cexCol = axis_label_size / 14,     # Adjust the size of the column labels
+            cexRow = axis_label_size / 14,     # Adjust the size of the row labels
+            trace = "none",                    # Remove traces inside the heatmap cells
+            xlab = input$text_xaxis,
+            ylab = input$text_yaxis,
+            main = NULL,
+            # lwid = lwid,
+            # lhei = lhei
+          )
+          
+          # # Manually add the title with a specific size
+          # title(
+          #   main = input$title,
+          #   cex.main = input$textlab_size_title / 14,  # Adjust the size of the title
+          #   line = 2
+          # )
+          
+          if (input$legendPositionHeat != "none") {
+            legend(
+              x = input$legendPositionHeat,
+              legend = names(selected_colors), # Labels for each group
+              col = selected_colors, # Colors for each group
+              pch = 15, # Square symbols
+              pt.cex = 1.5, # Size of the symbols
+              cex = legend_content_size / 14, # Size of the legend text
+              title = input$legend_title, # Title of the legend
+              title.cex = legend_title_size / 14 # Adjust legend title size
+            )
+          }
+          
+          
+          #   bty = "n", # No box around the legend
+          dev.off()  # Close the PNG devices
+          
+          # Step 2: Convert the TIFF to CMYK using the magick package
           # Convert the PNG to a CMYK TIFF using magick
-          img <- magick::image_read(temp_file)
+          img <- magick::image_read(rgb_tiff_file)
           img <- magick::image_convert(img, colorspace = "cmyk")
           magick::image_write(img, path = file, format = "tiff")
+          
+          
+        } else if (input$colormodel == "CMYK") {
+          # Handle other formats like PDF and EPS in CMYK
+          if (input$file_type == "pdf") {
+            pdf(file, width = input$width, height = input$height, colormodel = "cmyk")
+          } else if (input$file_type == "eps") {
+            postscript(file, width = input$width, height = input$height, colormodel = "cmyk")
+          }
+          
+          # Reuse the same logic from the renderImage function to generate the heatmap
+          long_data <- plot_data()
+          if (nrow(long_data) == 0 || all(is.na(long_data$NormalizedCounts))) {
+            return(NULL)
+          }
+          
+          # Combine all data associated with the same Symbol
+          heatmap_data <- plot_data() %>%
+            group_by(Symbol, sample_name) %>%
+            summarise(NormalizedCounts = mean(NormalizedCounts, na.rm = TRUE)) %>%
+            spread(key = "sample_name", value = NormalizedCounts)
+          
+          # Convert to a proper data frame and ensure it's numeric
+          heatmap_data <- as.data.frame(heatmap_data)
+          rownames(heatmap_data) <- heatmap_data$Symbol
+          heatmap_data <- heatmap_data[, -1]  # Remove the 'Symbol' column
+          
+          view(heatmap_data)
+          
+          # Check and handle NA values
+          if (any(is.na(heatmap_data))) {
+            showNotification("NA values detected in heatmap data. Handling NA values by replacing them with 0.", type = "warning")
+            heatmap_data[is.na(heatmap_data)] <- 0
+          }
+          
+          # Create annotation data frame for the selected attribute values
+          annotation_col <- plot_data() %>%
+            select(sample_name, Group) %>%
+            unique() %>%
+            column_to_rownames(var = "sample_name")  # Set sample_name as row names
+          
+          
+          
+          # Ensure the order of columns in heatmap_data matches annotation_col
+          annotation_col <- annotation_col[match(colnames(heatmap_data), rownames(annotation_col)), , drop = FALSE]
+          
+          # Ensure annotation_col is a factor or appropriate type for annotation
+          
+          annotation_col$Group <- factor(annotation_col$Group)
+          view(annotation_col)
+          
+          # Define colors for the heatmap
+          color_palette <- colorRampPalette(brewer.pal(9, input$color_scheme))(100)
+          
+          # Extract unique Broad_Group values
+          broad_groups <- unique(long_data$Broad_Group)
+          # Retrieve selected colors from the color pickers, based on Broad_Group
+          selected_colors <- sapply(broad_groups, function(Broad_Group) {
+            input[[paste0("color_", make.names(Broad_Group))]]
+          })
+          names(selected_colors) <- broad_groups
+          
+          ColSideColors <- selected_colors[as.character(annotation_col$Group)]
+          
+          # Save the heatmap to a temporary file
+          tmpfile <- tempfile(fileext = ".png")
+          png(tmpfile, width = input$width, height = input$height, units = input$units, res = input$dpi)  # Open a PNG device to save the plot
+          
+          # Apply size settings
+          title_size <- input$textlab_size_title
+          subtitle_size <- input$textlab_size_subtitle
+          legend_title_size <- input$textlab_size_legend
+          legend_content_size <- input$textlab_size_legend_content
+          axis_label_size <- input$textlab_size_axis
+          
+          # lwid=c(0.5,5) #make column of dendrogram and key very small and other colum very big 
+          # lhei=c(3,3) #make row of key and other dendrogram very small and other row big. 
+          
+          heatmap.2(
+            as.matrix(heatmap_data),
+            Colv = if(input$cluster_columns) TRUE else FALSE,  # Cluster columns based on user input
+            Rowv = if(input$cluster_rows) TRUE else FALSE,     # Cluster rows based on user input
+            col = color_palette,               # Use the color palette
+            ColSideColors = ColSideColors,     # Color columns based on groups
+            labRow = rownames(heatmap_data),   # Label rows with gene symbols
+            labCol = colnames(heatmap_data),   # Label columns with sample names
+            scale = "none",                    # No scaling applied
+            margins = c(10, 13),               # Adjust margins for better readability
+            cexCol = axis_label_size / 14,     # Adjust the size of the column labels
+            cexRow = axis_label_size / 14,     # Adjust the size of the row labels
+            trace = "none",                    # Remove traces inside the heatmap cells
+            xlab = input$text_xaxis,
+            ylab = input$text_yaxis,
+            main = NULL,
+            # lwid = lwid,
+            # lhei = lhei
+          )
+          
+          # # Manually add the title with a specific size
+          # title(
+          #   main = input$title,
+          #   cex.main = input$textlab_size_title / 14,  # Adjust the size of the title
+          #   line = 2
+          # )
+          
+          if (input$legendPositionHeat != "none") {
+            legend(
+              x = input$legendPositionHeat,
+              legend = names(selected_colors), # Labels for each group
+              col = selected_colors, # Colors for each group
+              pch = 15, # Square symbols
+              pt.cex = 1.5, # Size of the symbols
+              cex = legend_content_size / 14, # Size of the legend text
+              title = input$legend_title, # Title of the legend
+              title.cex = legend_title_size / 14 # Adjust legend title size
+            )
+          }
+          
+          
+          #   bty = "n", # No box around the legend
+          dev.off()  # Close the PNG devices
+          
+        } else {
+          if (input$file_type == "png") {
+            png(file, width = input$width, height = input$height, units = input$units, res = input$dpi)
+          } else if (input$file_type == "jpeg") {
+            jpeg(file, width = input$width, height = input$height, units = input$units, res = input$dpi)
+          } else if (input$file_type == "tiff") {
+            tiff(file, width = input$width, height = input$height, units = input$units, res = input$dpi)
+          } else if (input$file_type == "pdf") {
+            pdf(file, width = input$width, height = input$height)
+          } else if (input$file_type == "eps") {
+            postscript(file, width = input$width, height = input$height)
+          } else if (input$file_type == "svg") {
+            Cairo::CairoSVG(file, width = input$width, height = input$height)
+          } else if (input$file_type == "ps") {
+            postscript(file, width = input$width, height = input$height)
+          } else if (input$file_type == "wmf") {
+            win.metafile(file, width = input$width, height = input$height)
+          }
+          
+          # Reuse the same logic from the renderImage function to generate the heatmap
+          long_data <- plot_data()
+          if (nrow(long_data) == 0 || all(is.na(long_data$NormalizedCounts))) {
+            return(NULL)
+          }
+          
+          # Combine all data associated with the same Symbol
+          heatmap_data <- plot_data() %>%
+            group_by(Symbol, sample_name) %>%
+            summarise(NormalizedCounts = mean(NormalizedCounts, na.rm = TRUE)) %>%
+            spread(key = "sample_name", value = NormalizedCounts)
+          
+          # Convert to a proper data frame and ensure it's numeric
+          heatmap_data <- as.data.frame(heatmap_data)
+          rownames(heatmap_data) <- heatmap_data$Symbol
+          heatmap_data <- heatmap_data[, -1]  # Remove the 'Symbol' column
+          
+          view(heatmap_data)
+          
+          # Check and handle NA values
+          if (any(is.na(heatmap_data))) {
+            showNotification("NA values detected in heatmap data. Handling NA values by replacing them with 0.", type = "warning")
+            heatmap_data[is.na(heatmap_data)] <- 0
+          }
+          
+          # Create annotation data frame for the selected attribute values
+          annotation_col <- plot_data() %>%
+            select(sample_name, Group) %>%
+            unique() %>%
+            column_to_rownames(var = "sample_name")  # Set sample_name as row names
+          
+          
+          
+          # Ensure the order of columns in heatmap_data matches annotation_col
+          annotation_col <- annotation_col[match(colnames(heatmap_data), rownames(annotation_col)), , drop = FALSE]
+          
+          # Ensure annotation_col is a factor or appropriate type for annotation
+          
+          annotation_col$Group <- factor(annotation_col$Group)
+          view(annotation_col)
+          
+          # Define colors for the heatmap
+          color_palette <- colorRampPalette(brewer.pal(9, input$color_scheme))(100)
+          
+          # Extract unique Broad_Group values
+          broad_groups <- unique(long_data$Broad_Group)
+          # Retrieve selected colors from the color pickers, based on Broad_Group
+          selected_colors <- sapply(broad_groups, function(Broad_Group) {
+            input[[paste0("color_", make.names(Broad_Group))]]
+          })
+          names(selected_colors) <- broad_groups
+          
+          ColSideColors <- selected_colors[as.character(annotation_col$Group)]
+          
+          # # Save the heatmap to a temporary file
+          # tmpfile <- tempfile(fileext = ".png")
+          # png(tmpfile, width = input$width, height = input$height, units = input$units, res = input$dpi)  # Open a PNG device to save the plot
+          
+          # Apply size settings
+          title_size <- input$textlab_size_title
+          subtitle_size <- input$textlab_size_subtitle
+          legend_title_size <- input$textlab_size_legend
+          legend_content_size <- input$textlab_size_legend_content
+          axis_label_size <- input$textlab_size_axis
+          
+          # lwid=c(0.5,5) #make column of dendrogram and key very small and other colum very big 
+          # lhei=c(3,3) #make row of key and other dendrogram very small and other row big. 
+          
+          heatmap.2(
+            as.matrix(heatmap_data),
+            Colv = if(input$cluster_columns) TRUE else FALSE,  # Cluster columns based on user input
+            Rowv = if(input$cluster_rows) TRUE else FALSE,     # Cluster rows based on user input
+            col = color_palette,               # Use the color palette
+            ColSideColors = ColSideColors,     # Color columns based on groups
+            labRow = rownames(heatmap_data),   # Label rows with gene symbols
+            labCol = colnames(heatmap_data),   # Label columns with sample names
+            scale = "none",                    # No scaling applied
+            margins = c(10, 13),               # Adjust margins for better readability
+            cexCol = axis_label_size / 14,     # Adjust the size of the column labels
+            cexRow = axis_label_size / 14,     # Adjust the size of the row labels
+            trace = "none",                    # Remove traces inside the heatmap cells
+            xlab = input$text_xaxis,
+            ylab = input$text_yaxis,
+            main = NULL,
+            # lwid = lwid,
+            # lhei = lhei
+          )
+          
+          # # Manually add the title with a specific size
+          # title(
+          #   main = input$title,
+          #   cex.main = input$textlab_size_title / 14,  # Adjust the size of the title
+          #   line = 2
+          # )
+          
+          if (input$legendPositionHeat != "none") {
+            legend(
+              x = input$legendPositionHeat,
+              legend = names(selected_colors), # Labels for each group
+              col = selected_colors, # Colors for each group
+              pch = 15, # Square symbols
+              pt.cex = 1.5, # Size of the symbols
+              cex = legend_content_size / 14, # Size of the legend text
+              title = input$legend_title, # Title of the legend
+              title.cex = legend_title_size / 14 # Adjust legend title size
+            )
+          }
+          
+          
+          #   bty = "n", # No box a round the legend
+          dev.off()  # Close the PNG devices
         }
-        print(last_plot())
-        dev.off()
       } else {
-        ggsave(file, plot = last_plot(), device = input$file_type, width = input$width, height = input$height, units = input$units, dpi = input$dpi) # nolint
+        if (input$colormodel == "CMYK") {
+          if (input$file_type == "pdf") {
+            pdf(file, width = input$width, height = input$height, colormodel = "cmyk") # nolint: line_length_linter.
+          } else if (input$file_type == "eps") {
+            postscript(file, width = input$width, height = input$height, colormodel = "cmyk")
+          } else if (input$file_type == "tiff") {
+            # Generate a temporary PNG in RGB colorspace
+            temp_file <- tempfile(fileext = ".png")
+            
+            ggsave(temp_file, plot = last_plot(), width = input$width, height = input$height, dpi = input$dpi)
+            
+            # Convert the PNG to a CMYK TIFF using magick
+            img <- magick::image_read(temp_file)
+            img <- magick::image_convert(img, colorspace = "cmyk")
+            magick::image_write(img, path = file, format = "tiff")
+          }
+          print(last_plot())
+          dev.off()
+        } else {
+          ggsave(file, plot = last_plot(), device = input$file_type, width = input$width, height = input$height, units = input$units, dpi = input$dpi) # nolint
+        }
       }
     }
   )
   
-  
-  
 }
 
-# Run the application
 shinyApp(ui = ui, server = server)
