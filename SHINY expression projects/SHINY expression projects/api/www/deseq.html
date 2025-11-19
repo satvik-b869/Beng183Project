@@ -83,17 +83,19 @@
         updateThemeIcon(isDark);
       }
 
+      /* -----------------------------------------
+         RUN DESEQ2
+      ----------------------------------------- */
       async function runDESeq() {
         const fileInput = document.getElementById("counts-file");
         const group1Input = document.getElementById("group1");
         const group2Input = document.getElementById("group2");
-        const outputEl = document.getElementById("deseq-output");
         const statusEl = document.getElementById("deseq-status");
         const runBtn = document.getElementById("run-deseq-btn");
 
         if (!fileInput.files.length) {
-            alert("Upload a counts file first.");
-            return;
+          alert("Upload a counts file first.");
+          return;
         }
 
         const file = fileInput.files[0];
@@ -101,89 +103,78 @@
         const g2 = group2Input.value;
 
         if (!g1 || !g2) {
-            alert("Provide sample names for both Group 1 and Group 2.");
-            return;
+          alert("Provide sample names for both Group 1 and Group 2.");
+          return;
         }
 
         try {
-            document.body.dataset.loading = "true";
-            runBtn.disabled = true;
-            statusEl.textContent = "Running DESeq2…";
-            outputEl.textContent = "";
+          document.body.dataset.loading = "true";
+          runBtn.disabled = true;
+          statusEl.textContent = "Running DESeq2…";
 
-            // Build multipart form
-            const form = new FormData();
-            form.append("counts_file", file);
-            form.append(
+          const form = new FormData();
+          form.append("counts_file", file);
+          form.append(
             "payload",
-            JSON.stringify({
-                group1: g1,
-                group2: g2
-            })
-            );
+            JSON.stringify({ group1: g1, group2: g2 })
+          );
 
-            // SEND TO /api/deseq (IMPORTANT!!)
-            const res = await axios.post("/api/deseq", form, {
+          const res = await axios.post("/api/deseq", form, {
             headers: { "Content-Type": "multipart/form-data" }
-            });
+          });
 
-            statusEl.textContent = "DESeq2 run complete.";
-            outputEl.textContent = JSON.stringify(res.data, null, 2);
+          statusEl.textContent = "DESeq2 run complete.";
+
+          renderDESeqTable(res.data.results);
 
         } catch (err) {
-            console.error(err);
-            statusEl.textContent = "Error running DESeq2.";
-            outputEl.textContent = err?.response?.data
-            ? JSON.stringify(err.response.data, null, 2)
-            : String(err);
+          console.error(err);
+          statusEl.textContent = "Error running DESeq2.";
         } finally {
-            document.body.dataset.loading = "false";
-            runBtn.disabled = false;
+          document.body.dataset.loading = "false";
+          runBtn.disabled = false;
         }
-        }
+      }
 
-        function renderDESeqTable(rows) {
-            const container = document.getElementById("deseq-table-container");
-            container.innerHTML = ""; // wipe old table
+      /* -----------------------------------------
+         RENDER TABLE
+      ----------------------------------------- */
+      function renderDESeqTable(rows) {
+        const container = document.getElementById("deseq-table-container");
+        container.innerHTML = "";
 
-            if (!rows || !rows.length) {
-                container.innerHTML = "<p>No results.</p>";
-                return;
-            }
-
-            // build header
-            const columns = Object.keys(rows[0]).filter(c => c !== "_row");
-            
-            let html = `
-                <div class="overflow-auto max-h-[600px] border rounded-lg">
-                <table class="min-w-full text-xs text-gray-800 dark:text-gray-200">
-                <thead class="bg-gray-100 dark:bg-gray-700">
-                    <tr>
-                    ${columns.map(c => `<th class="px-3 py-2 text-left font-semibold">${c}</th>`).join("")}
-                    </tr>
-                </thead>
-                <tbody>
-            `;
-
-            // rows
-            html += rows.map(r => `
-                <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
-                    ${columns.map(c => `<td class="px-3 py-1">${r[c] ?? ""}</td>`).join("")}
-                </tr>
-            `).join("");
-
-            html += `
-                </tbody>
-                </table>
-                </div>
-            `;
-
-            container.innerHTML = html;
+        if (!rows || !rows.length) {
+          container.innerHTML = "<p>No results.</p>";
+          return;
         }
 
+        const columns = Object.keys(rows[0]).filter(c => c !== "_row");
 
-    
+        let html = `
+          <div class="overflow-auto max-h-[600px] border rounded-lg">
+          <table class="min-w-full text-xs text-gray-800 dark:text-gray-200">
+          <thead class="bg-gray-100 dark:bg-gray-700">
+            <tr>
+              ${columns.map(c => `<th class="px-3 py-2 text-left font-semibold">${c}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+        `;
 
+        html += rows.map(r => `
+          <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+            ${columns.map(c => `<td class="px-3 py-1">${r[c] ?? ""}</td>`).join("")}
+          </tr>
+        `).join("");
+
+        html += `
+          </tbody>
+          </table>
+          </div>
+        `;
+
+        container.innerHTML = html;
+      }
 
       document.addEventListener("DOMContentLoaded", () => {
         updateThemeIcon(document.documentElement.classList.contains("dark"));
@@ -193,11 +184,9 @@
         const fileStatus = document.getElementById("counts-status");
         if (fileInput && fileStatus) {
           fileInput.addEventListener("change", () => {
-            if (fileInput.files.length) {
-              fileStatus.textContent = `Selected: ${fileInput.files[0].name}`;
-            } else {
-              fileStatus.textContent = "No file selected.";
-            }
+            fileStatus.textContent = fileInput.files.length
+              ? `Selected: ${fileInput.files[0].name}`
+              : "No file selected.";
           });
         }
       });
@@ -232,225 +221,130 @@
         </div>
 
         <div class="flex flex-col gap-4">
-          <!-- Counts upload card -->
+
+          <!-- Counts upload -->
           <div class="flex flex-col gap-4">
-            <p class="text-lg font-semibold text-gray-900 dark:text-white">
-              Counts Matrix
-            </p>
-            <div
-              class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between rounded-lg border border-gray-200 dark:border-white/10 bg-transparent"
-            >
+            <p class="text-lg font-semibold text-gray-900 dark:text-white">Counts Matrix</p>
+
+            <div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between rounded-lg border border-gray-200 dark:border-white/10">
               <div class="flex items-center gap-4">
-                <div
-                  class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12"
-                >
+                <div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 size-12">
                   <span class="material-symbols-outlined">upload_file</span>
                 </div>
-                <div class="flex flex-col justify-center">
-                  <p
-                    class="text-zinc-900 dark:text-white text-base font-medium leading-normal line-clamp-1"
-                  >
+                <div class="flex flex-col">
+                  <p class="text-zinc-900 dark:text-white text-base font-medium">
                     Counts (raw)
                   </p>
-                  <p
-                    class="text-zinc-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-2"
-                  >
-                    Upload a counts matrix (.csv or .txt)
+                  <p class="text-zinc-500 dark:text-gray-400 text-sm">
+                    Upload CSV or TXT matrix
                   </p>
                 </div>
               </div>
-              <div class="shrink-0">
-                <input
-                  id="counts-file"
-                  type="file"
-                  accept=".csv,.txt"
-                  class="hidden"
-                />
+
+              <div>
+                <input id="counts-file" type="file" accept=".csv,.txt" class="hidden" />
                 <button
                   type="button"
                   onclick="document.getElementById('counts-file').click()"
-                  class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-8 px-4 bg-zinc-100 text-zinc-700 text-sm font-medium leading-normal w-fit hover:bg-zinc-200 transition-colors"
+                  class="rounded-lg h-8 px-4 bg-zinc-100 text-zinc-700 text-sm hover:bg-zinc-200"
                 >
-                  <span class="truncate">Browse</span>
+                  Browse
                 </button>
               </div>
             </div>
-            <p
-              id="counts-status"
-              class="px-4 text-xs text-gray-500 dark:text-gray-400"
-            >
+
+            <p id="counts-status" class="px-4 text-xs text-gray-500 dark:text-gray-400">
               No file selected.
             </p>
           </div>
 
-          <!-- Group definitions -->
-          <details
-            class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group"
-            open
-          >
-            <summary
-              class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none"
-            >
+          <!-- Groups -->
+          <details class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 px-4" open>
+            <summary class="flex cursor-pointer items-center justify-between py-3">
               <div class="flex items-center gap-3">
-                <span
-                  class="material-symbols-outlined text-gray-700 dark:text-white text-2xl"
-                  aria-hidden="true"
-                  >groups</span
-                >
-                <p
-                  class="text-gray-900 dark:text-white text-sm font-medium"
-                >
-                  Sample Groups
-                </p>
+                <span class="material-symbols-outlined text-2xl">groups</span>
+                <p class="text-sm font-medium">Sample Groups</p>
               </div>
-              <span
-                class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180"
-                aria-hidden="true"
-                >expand_more</span
-              >
+              <span class="material-symbols-outlined">expand_more</span>
             </summary>
+
             <div class="pb-4 pt-1 flex flex-col gap-3">
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                Enter sample IDs as they appear in the counts matrix, separated
-                by commas.
+              <p class="text-xs text-gray-500">
+                Enter sample IDs separated by commas.
               </p>
-              <label
-                class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium"
-              >
+              <label class="flex flex-col gap-1 text-xs font-medium">
                 <span>Group 1 Samples</span>
-                <input
-                  id="group1"
-                  type="text"
-                  value="sample1,sample2"
-                  class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"
-                />
+                <input id="group1" type="text" class="h-9 rounded-md border px-2 text-sm" />
               </label>
-              <label
-                class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium"
-              >
+              <label class="flex flex-col gap-1 text-xs font-medium">
                 <span>Group 2 Samples</span>
-                <input
-                  id="group2"
-                  type="text"
-                  value="sample3,sample4"
-                  class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"
-                />
+                <input id="group2" type="text" class="h-9 rounded-md border px-2 text-sm" />
               </label>
             </div>
           </details>
 
-          <!-- Run + status -->
-          <div
-            class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 py-3 gap-3"
-          >
+          <!-- Run -->
+          <div class="flex flex-col rounded-lg border px-4 py-3 gap-3">
             <button
               id="run-deseq-btn"
-              type="button"
               onclick="runDESeq()"
-              class="inline-flex items-center justify-center rounded-md bg-primary text-white text-sm font-semibold h-10 px-4 hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="rounded-md bg-primary text-white text-sm font-semibold h-10 px-4 hover:bg-primary/90"
             >
-              <span class="material-symbols-outlined text-sm mr-1"
-                >play_arrow</span
-              >
+              <span class="material-symbols-outlined text-sm mr-1">play_arrow</span>
               Run DESeq2
             </button>
-            <p
-              id="deseq-status"
-              class="text-xs text-gray-500 dark:text-gray-400"
-            >
-              Ready to run.
-            </p>
+            <p id="deseq-status" class="text-xs text-gray-500">Ready to run.</p>
           </div>
         </div>
       </aside>
 
-      <!-- Main content -->
+      <!-- Results -->
       <main class="flex-1 p-8 overflow-y-auto">
         <div class="flex flex-col h-full relative">
+
+          <!-- Top buttons -->
           <div class="flex justify-end gap-2 mb-4">
-            <div class="flex gap-2">
-              <a
-                href="/"
-                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
-              >
-                <span class="material-symbols-outlined text-sm">home</span>
-                <span>Home</span>
-              </a>
-              <button
-                type="button"
-                onclick="toggleTheme()"
-                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
-              >
-                <span
-                  id="theme-icon"
-                  class="material-symbols-outlined text-sm"
-                  >dark_mode</span
-                >
-                <span>Theme</span>
-              </button>
-            </div>
-            <button
-              type="button"
-              onclick="toggleSidebar()"
-              class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
-            >
-              <span
-                id="sidebar-toggle-icon"
-                class="material-symbols-outlined text-sm"
-                >chevron_left</span
-              >
+            <a href="/" class="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs">
+              <span class="material-symbols-outlined text-sm">home</span> Home
+            </a>
+            <button onclick="toggleTheme()" class="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs">
+              <span id="theme-icon" class="material-symbols-outlined text-sm">dark_mode</span>
+              Theme
+            </button>
+            <button onclick="toggleSidebar()" class="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs">
+              <span id="sidebar-toggle-icon" class="material-symbols-outlined text-sm">chevron_left</span>
               <span id="sidebar-toggle-label">Hide Sidebar</span>
             </button>
           </div>
 
-          <!-- Results panel -->
-          <div
-            class="flex-1 flex items-stretch justify-center rounded-xl border border-dashed border-gray-300/70 dark:border-white/20 bg-white/60 dark:bg-background-dark/40 relative overflow-hidden"
-          >
+          <!-- Results Box -->
+          <div class="flex-1 flex items-stretch justify-center rounded-xl border bg-white/60 dark:bg-background-dark/40 relative">
             <div class="flex flex-col w-full h-full">
-              <div
-                class="border-b border-gray-200 dark:border-white/10 px-4 py-3 flex items-center justify-between"
-              >
-                <div>
-                  <p
-                    class="text-gray-900 dark:text-white text-sm font-semibold"
-                  >
-                    DESeq2 Results
-                  </p>
-                  <p
-                    class="text-gray-500 dark:text-gray-400 text-xs"
-                  >
-                    JSON output from the /deseq endpoint.
-                  </p>
-                </div>
+
+              <div class="border-b px-4 py-3">
+                <p class="text-sm font-semibold">DESeq2 Results</p>
+                <p class="text-xs text-gray-500">Table of differential expression results</p>
               </div>
+
               <div class="flex-1 overflow-auto p-4">
-                <pre
-                  id="deseq-output"
-                  class="text-xs whitespace-pre-wrap font-mono bg-black/5 dark:bg-black/30 rounded-md p-3"
-                ></pre>
-              
-                <!-- NEW TABLE CONTAINER GOES HERE -->
+
+                <!-- Hidden element so JS does not crash -->
+                <pre id="deseq-output" class="hidden"></pre>
+
+                <!-- Visible table -->
                 <div id="deseq-table-container" class="mt-4"></div>
-              </div>              
+
+              </div>
             </div>
 
-            <div
-              id="loading-indicator"
-              class="absolute inset-0 items-center justify-center bg-black/10 dark:bg-black/30"
-            >
-              <div
-                class="flex flex-col items-center gap-3 rounded-lg bg-white/90 dark:bg-background-dark/90 px-4 py-3 shadow-md"
-              >
-                <div
-                  class="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"
-                ></div>
-                <p class="text-xs text-gray-700 dark:text-gray-200">
-                  Running DESeq2…
-                </p>
+            <div id="loading-indicator" class="absolute inset-0 items-center justify-center">
+              <div class="flex flex-col items-center gap-3 rounded-lg px-4 py-3">
+                <div class="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-xs">Running DESeq2…</p>
               </div>
             </div>
           </div>
+
         </div>
       </main>
     </div>
