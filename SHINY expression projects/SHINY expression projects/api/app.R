@@ -9,6 +9,8 @@ library(DBI)
 library(RSQLite)
 library(magick)
 library(gplots)
+library(DESeq2)
+
 
 source("gene_expression_module.R")
 
@@ -1212,5 +1214,83 @@ function() {
 #* @serializer contentType list(type="text/javascript")
 function() {
   read_file(file.path("www", "expression.js"))
+}
+
+# =====================================================
+# DESeq2 ENDPOINT (fully working)
+# =====================================================
+
+#' Run DESeq2 differential expression
+#' @parser multi
+#' @post /api/deseq
+#' @serializer json
+function(req, res) {
+  library(DESeq2)
+  library(jsonlite)
+
+  # 1. Extract multipart body
+  parts <- req$body %||% list()
+
+  get_part <- function(name) {
+    for (p in parts) {
+      if (!is.null(p$name) && identical(p$name, name)) return(p)
+    }
+    NULL
+  }
+
+  file_part <- get_part("counts_file")
+  json_part <- get_part("payload")
+
+  if (is.null(file_part)) {
+    res$status <- 400
+    return(list(error = "No counts matrix uploaded."))
+  }
+
+  if (is.null(json_part)) {
+    res$status <- 400
+    return(list(error = "No sample groups (payload) provided."))
+  }
+
+  # 2. Read CSV
+  tmp_path <- tempfile(fileext = ".csv")
+  writeBin(file_part$value, tmp_path)
+  counts <- read.csv(tmp_path, row.names = 1, check.names = FALSE)
+
+  # 3. Parse JSON payload
+  body <- jsonlite::fromJSON(rawToChar(json_part$value))
+  g1 <- trimws(unlist(strsplit(body$group1, ",")))
+  g2 <- trimws(unlist(strsplit(body$group2, ",")))
+  samples <- c(g1, g2)
+
+  # 4. Validate sample names
+  if (!all(samples %in% colnames(counts))) {
+    missing <- samples[!samples %in% colnames(counts)]
+    res$status <- 400
+    return(list(error = paste("Missing samples:", paste(missing, collapse=", "))))
+  }
+
+  # 5. Build metadata
+  condition <- factor(c(rep("group1", length(g1)), rep("group2", length(g2))))
+  colData <- data.frame(row.names = samples, condition = condition)
+
+  # 6. Run DESeq2
+  dds <- DESeqDataSetFromMatrix(
+    countData = counts[, samples],
+    colData = colData,
+    design = ~ condition
+  )
+
+  dds <- DESeq(dds)
+  res_df <- as.data.frame(results(dds))
+  res_df$gene <- rownames(res_df)
+
+  list(results = res_df)
+}
+
+
+#* @get /deseq
+#* @serializer html
+function() {
+  read_file(file.path("www", "deseq.html"))
 }
 
