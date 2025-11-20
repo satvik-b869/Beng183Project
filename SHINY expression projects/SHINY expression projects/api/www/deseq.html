@@ -144,33 +144,39 @@
         container.innerHTML = "";
 
         if (!rows || !rows.length) {
-          container.innerHTML = "<p>No results.</p>";
-          return;
+            container.innerHTML = "<p>No results.</p>";
+            return;
         }
 
-        const columns = Object.keys(rows[0]).filter(c => c !== "_row");
+        // 🔥 Collect ALL column names from ALL rows
+        const columnSet = new Set();
+        rows.forEach(r => Object.keys(r).forEach(key => {
+            if (key !== "_row") columnSet.add(key);
+        }));
+        const columns = Array.from(columnSet);
 
+        // Build the table
         let html = `
-          <div class="overflow-auto max-h-[600px] border rounded-lg">
-          <table class="min-w-full text-xs text-gray-800 dark:text-gray-200">
-          <thead class="bg-gray-100 dark:bg-gray-700">
-            <tr>
-              ${columns.map(c => `<th class="px-3 py-2 text-left font-semibold">${c}</th>`).join("")}
-            </tr>
-          </thead>
-          <tbody>
+            <div class="overflow-auto max-h-[600px] border rounded-lg">
+            <table class="min-w-full text-xs text-gray-800 dark:text-gray-200">
+                <thead class="bg-gray-100 dark:bg-gray-700">
+                <tr>
+                    ${columns.map(c => `<th class="px-3 py-2 text-left font-semibold">${c}</th>`).join("")}
+                </tr>
+                </thead>
+                <tbody>
         `;
 
         html += rows.map(r => `
-          <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+            <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
             ${columns.map(c => `<td class="px-3 py-1">${r[c] ?? ""}</td>`).join("")}
-          </tr>
+            </tr>
         `).join("");
 
         html += `
-          </tbody>
-          </table>
-          </div>
+                </tbody>
+            </table>
+            </div>
         `;
 
         container.innerHTML = html;
