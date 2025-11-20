@@ -478,8 +478,28 @@ loadBtn.addEventListener("click", async () => {
   }
 });
 
+const hydrateFromSessionCsv = async () => {
+  const stored = sessionStorage.getItem("deseqVolcanoCsv");
+  if (!stored) return;
+  sessionStorage.removeItem("deseqVolcanoCsv");
+  try {
+    const file = new File([stored], "deseq_volcano_ready.csv", { type: "text/csv" });
+    currentFile = file;
+    plotContainer.classList.add("no-border");
+    updateFileStatus(currentFile);
+    cachedDefaults = null;
+    await fetchDefaults();
+    applyDefaults(Boolean(showMACheckbox?.checked));
+    await plotRequest();
+    setHasPlot(true);
+  } catch (err) {
+    console.error("Failed to load DESeq CSV from sessionStorage", err);
+  }
+};
+
 resetZoom();
 updateSavedList();
 setHasPlot(false);
 setLoading(false);
 updateFileStatus(null);
+(async () => { await hydrateFromSessionCsv(); })();

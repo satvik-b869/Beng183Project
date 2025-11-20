@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DESeq2 Differential Expression</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              primary: "#2C097F",
+              "background-light": "#fafafa",
+              "background-dark": "#151022",
+              "sidebar-dark": "#131118"
+            },
+            fontFamily: {
+              display: ["system-ui", "sans-serif"]
+            }
+          }
+        }
+      };
+    </script>
+
+    <!-- Icons -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@400;500;700&display=swap"
+    />
+
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+    <script>
+      const storedSidebarPref = localStorage.getItem("expression-sidebar");
+
+      function updateThemeIcon(isDark) {
+        const icon = document.getElementById("theme-icon");
+        if (icon) icon.textContent = isDark ? "light_mode" : "dark_mode";
+      }
+
+      function updateSidebarToggle(isHidden) {
+        const icon = document.getElementById("sidebar-toggle-icon");
+        const label = document.getElementById("sidebar-toggle-label");
+        if (icon) icon.textContent = isHidden ? "chevron_right" : "chevron_left";
+        if (label) label.textContent = isHidden ? "Show Sidebar" : "Hide Sidebar";
+      }
+
+      function setSidebarHidden(isHidden) {
+        const sidebar = document.getElementById("app-sidebar");
+        if (sidebar) sidebar.classList.toggle("hidden", isHidden);
+        document.body.dataset.sidebarHidden = isHidden ? "true" : "false";
+        updateSidebarToggle(isHidden);
+      }
+
+      function toggleSidebar() {
+        const shouldHide = document.body?.dataset.sidebarHidden !== "true";
+        setSidebarHidden(shouldHide);
+        localStorage.setItem(
+          "expression-sidebar",
+          shouldHide ? "hidden" : "visible"
+        );
+      }
+
+      (function () {
+        const stored = localStorage.getItem("theme");
+        const prefersDark =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const root = document.documentElement;
+        const useDark = stored === "dark" || (!stored && prefersDark);
+        root.classList.toggle("dark", useDark);
+      })();
+
+      function toggleTheme() {
+        const root = document.documentElement;
+        const isDark = root.classList.toggle("dark");
+        localStorage.setItem("theme", isDark ? "dark" : "light");
+        updateThemeIcon(isDark);
+      }
+
+      let latestDESeqRows = [];
+      let latestDESeqCsv = "";
+
+      const buildCsv = (rows) => {
+        if (!rows || !rows.length) return "";
+        const columns = ["symbol", "log2fold_change", "padj", "base_mean", "gene_id"];
+        const header = columns.join(",");
+        const lines = rows.map((r) => columns.map((c) => r[c] ?? "").join(","));
+        return [header, ...lines].join("\n");
+      };
+
+      async function runDESeq() {
+        const fileInput = document.getElementById("counts-file");
+        const group1Input = document.getElementById("group1");
+        const group2Input = document.getElementById("group2");
+        const speciesSelect = document.getElementById("species");
+        const outputEl = document.getElementById("deseq-output");
+        const statusEl = document.getElementById("deseq-status");
+        const runBtn = document.getElementById("run-deseq-btn");
+
+        if (!fileInput.files.length) {
+            alert("Upload a counts file first.");
+            return;
+        }
+
+        const file = fileInput.files[0];
+        const g1 = group1Input.value;
+        const g2 = group2Input.value;
+
+        if (!g1 || !g2) {
+            alert("Provide sample names for both Group 1 and Group 2.");
+            return;
+        }
+
+        try {
+            document.body.dataset.loading = "true";
+            runBtn.disabled = true;
+            statusEl.textContent = "Running DESeq2…";
+            outputEl.textContent = "";
+
+            // Build multipart form
+            const form = new FormData();
+            form.append("counts_file", file);
+            form.append(
+              "payload",
+              JSON.stringify({
+                group1: g1,
+                group2: g2,
+                species: speciesSelect?.value || "human"
+              })
+            );
+
+            // SEND TO /api/deseq (IMPORTANT!!)
+            const res = await axios.post("/api/deseq", form, {
+              headers: { "Content-Type": "multipart/form-data" }
+            });
+
+            const rows = res?.data?.results || [];
+            // Replace nulls/undefined with empty strings for display/download
+            const cleanedRows = rows.map(r => {
+              const copy = { ...r };
+              // ensure all expected columns exist
+              ["symbol", "log2fold_change", "padj", "base_mean", "gene_id"].forEach(k => {
+                if (!(k in copy)) copy[k] = "";
+              });
+              Object.keys(copy).forEach(k => {
+                if (copy[k] === null || typeof copy[k] === "undefined") copy[k] = "";
+              });
+              return copy;
+            });
+            latestDESeqRows = rows;
+            latestDESeqCsv = buildCsv(cleanedRows);
+
+            statusEl.textContent = "DESeq2 run complete.";
+            outputEl.textContent = JSON.stringify(res.data, null, 2);
+            renderDESeqTable(cleanedRows);
+
+        } catch (err) {
+            console.error(err);
+            statusEl.textContent = "Error running DESeq2.";
+            outputEl.textContent = err?.response?.data
+            ? JSON.stringify(err.response.data, null, 2)
+            : String(err);
+            latestDESeqRows = [];
+            latestDESeqCsv = "";
+        } finally {
+            document.body.dataset.loading = "false";
+            runBtn.disabled = false;
+        }
+      }
+
+        function renderDESeqTable(rows) {
+            const container = document.getElementById("deseq-table-container");
+            container.innerHTML = ""; // wipe old table
+
+            if (!rows || !rows.length) {
+                container.innerHTML = "<p>No results.</p>";
+                return;
+            }
+
+            // build header in desired order
+            const columns = ["symbol", "log2fold_change", "padj", "base_mean", "gene_id"];
+            
+            let html = `
+                <div class="overflow-auto max-h-[600px] border rounded-lg bg-white dark:bg-black/20">
+                <table class="min-w-full text-xs text-gray-800 dark:text-gray-200">
+                <thead class="bg-gray-100 dark:bg-gray-700">
+                    <tr>
+                    ${columns.map(c => `<th class="px-3 py-2 text-left font-semibold">${c}</th>`).join("")}
+                    </tr>
+                </thead>
+                <tbody>
+            `;
+
+            // rows
+            html += rows.map(r => `
+                <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+                    ${columns.map(c => `<td class="px-3 py-1">${r[c] ?? ""}</td>`).join("")}
+                </tr>
+            `).join("");
+
+            html += `
+                </tbody>
+                </table>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+
+    
+
+
+      document.addEventListener("DOMContentLoaded", () => {
+        updateThemeIcon(document.documentElement.classList.contains("dark"));
+        setSidebarHidden(storedSidebarPref === "hidden");
+
+        const fileInput = document.getElementById("counts-file");
+        const fileStatus = document.getElementById("counts-status");
+        if (fileInput && fileStatus) {
+          fileInput.addEventListener("change", () => {
+            if (fileInput.files.length) {
+              fileStatus.textContent = `Selected: ${fileInput.files[0].name}`;
+            } else {
+              fileStatus.textContent = "No file selected.";
+            }
+          });
+        }
+
+        const volcanoBtn = document.getElementById("send-volcano-btn");
+        const downloadBtn = document.getElementById("download-deseq-btn");
+
+        if (downloadBtn) {
+          downloadBtn.addEventListener("click", () => {
+            if (!latestDESeqCsv) {
+              alert("Run DESeq2 first to generate results.");
+              return;
+            }
+            const blob = new Blob([latestDESeqCsv], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "deseq_volcano_ready.csv";
+            a.click();
+            URL.revokeObjectURL(url);
+          });
+        }
+
+        if (volcanoBtn) {
+          volcanoBtn.addEventListener("click", () => {
+            if (!latestDESeqCsv) {
+              alert("Run DESeq2 first to generate results.");
+              return;
+            }
+            sessionStorage.setItem("deseqVolcanoCsv", latestDESeqCsv);
+            window.open("/volcano", "_blank");
+          });
+        }
+      });
+    </script>
+
+    <style>
+      #loading-indicator {
+        display: none;
+      }
+      body[data-loading="true"] #loading-indicator {
+        display: flex;
+      }
+    </style>
+  </head>
+
+  <body
+    class="h-screen bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-100"
+  >
+    <div class="flex h-full">
+      <!-- Sidebar -->
+      <aside
+        id="app-sidebar"
+        class="w-[390px] shrink-0 border-r border-gray-200/70 dark:border-white/10 bg-white/90 dark:bg-sidebar-dark backdrop-blur flex flex-col px-6 py-6 gap-6 overflow-y-auto"
+      >
+        <div class="flex flex-col">
+          <h1 class="text-gray-900 dark:text-white text-base font-semibold">
+            DESeq2 Differential Expression
+          </h1>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">
+            Upload counts & define groups to run DESeq2.
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-4">
+          <!-- Counts upload card -->
+          <div class="flex flex-col gap-4">
+            <p class="text-lg font-semibold text-gray-900 dark:text-white">
+              Counts Matrix
+            </p>
+            <div
+              class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between rounded-lg border border-gray-200 dark:border-white/10 bg-transparent"
+            >
+              <div class="flex items-center gap-4">
+                <div
+                  class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12"
+                >
+                  <span class="material-symbols-outlined">upload_file</span>
+                </div>
+                <div class="flex flex-col justify-center">
+                  <p
+                    class="text-zinc-900 dark:text-white text-base font-medium leading-normal line-clamp-1"
+                  >
+                    Counts (raw)
+                  </p>
+                  <p
+                    class="text-zinc-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-2"
+                  >
+                    Upload a counts matrix (.csv or .txt)
+                  </p>
+                </div>
+              </div>
+              <div class="shrink-0">
+                <input
+                  id="counts-file"
+                  type="file"
+                  accept=".csv,.txt"
+                  class="hidden"
+                />
+                <button
+                  type="button"
+                  onclick="document.getElementById('counts-file').click()"
+                  class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-8 px-4 bg-zinc-100 text-zinc-700 text-sm font-medium leading-normal w-fit hover:bg-zinc-200 transition-colors"
+                >
+                  <span class="truncate">Browse</span>
+                </button>
+              </div>
+            </div>
+            <p
+              id="counts-status"
+              class="px-4 text-xs text-gray-500 dark:text-gray-400"
+            >
+              No file selected.
+            </p>
+          </div>
+
+          <!-- Group definitions -->
+          <details
+            class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group"
+            open
+          >
+            <summary
+              class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none"
+            >
+              <div class="flex items-center gap-3">
+                <span
+                  class="material-symbols-outlined text-gray-700 dark:text-white text-2xl"
+                  aria-hidden="true"
+                  >groups</span
+                >
+                <p
+                  class="text-gray-900 dark:text-white text-sm font-medium"
+                >
+                  Sample Groups
+                </p>
+              </div>
+              <span
+                class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180"
+                aria-hidden="true"
+                >expand_more</span
+              >
+            </summary>
+            <div class="pb-4 pt-1 flex flex-col gap-3">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Enter sample IDs as they appear in the counts matrix, separated
+                by commas.
+              </p>
+              <label
+                class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium"
+              >
+                <span>Group 1 Samples</span>
+                <input
+                  id="group1"
+                  type="text"
+                  value="sample1,sample2"
+                  class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"
+                />
+              </label>
+              <label
+                class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium"
+              >
+                <span>Group 2 Samples</span>
+                <input
+                  id="group2"
+                  type="text"
+                  value="sample3,sample4"
+                  class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"
+                />
+              </label>
+              <label
+                class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium"
+              >
+                <span>Species (for symbol lookup)</span>
+                <select
+                  id="species"
+                  class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"
+                >
+                  <option value="human">Human (ENSEMBL → SYMBOL)</option>
+                  <option value="mouse">Mouse (ENSEMBL → SYMBOL)</option>
+                  <option value="fly">Fly (FBgn → SYMBOL)</option>
+                </select>
+              </label>
+            </div>
+          </details>
+
+          <!-- Run + status -->
+          <div
+            class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 py-3 gap-3"
+          >
+            <button
+              id="run-deseq-btn"
+              type="button"
+              onclick="runDESeq()"
+              class="inline-flex items-center justify-center rounded-md bg-primary text-white text-sm font-semibold h-10 px-4 hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span class="material-symbols-outlined text-sm mr-1"
+                >play_arrow</span
+              >
+              Run DESeq2
+            </button>
+            <p
+              id="deseq-status"
+              class="text-xs text-gray-500 dark:text-gray-400"
+            >
+              Ready to run.
+            </p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <main class="flex-1 p-8 overflow-y-auto">
+        <div class="flex flex-col h-full relative">
+          <div class="flex justify-end gap-2 mb-4">
+            <div class="flex gap-2">
+              <a
+                href="/"
+                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+              >
+                <span class="material-symbols-outlined text-sm">home</span>
+                <span>Home</span>
+              </a>
+              <button
+                type="button"
+                onclick="toggleTheme()"
+                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+              >
+                <span
+                  id="theme-icon"
+                  class="material-symbols-outlined text-sm"
+                  >dark_mode</span
+                >
+                <span>Theme</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              onclick="toggleSidebar()"
+              class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+            >
+              <span
+                id="sidebar-toggle-icon"
+                class="material-symbols-outlined text-sm"
+                >chevron_left</span
+              >
+              <span id="sidebar-toggle-label">Hide Sidebar</span>
+            </button>
+          </div>
+
+          <!-- Results panel -->
+          <div
+            class="flex-1 flex items-stretch justify-center rounded-xl border border-dashed border-gray-300/70 dark:border-white/20 bg-white/60 dark:bg-background-dark/40 relative overflow-hidden"
+          >
+            <div class="flex flex-col w-full h-full">
+              <div
+                class="border-b border-gray-200 dark:border-white/10 px-4 py-3 flex items-center justify-between"
+              >
+                <div>
+                  <p
+                    class="text-gray-900 dark:text-white text-sm font-semibold"
+                  >
+                    DESeq2 Results
+                  </p>
+                  <p
+                    class="text-gray-500 dark:text-gray-400 text-xs"
+                  >
+                    Volcano-ready table with gene symbols.
+                  </p>
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    id="download-deseq-btn"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <span class="material-symbols-outlined text-sm">download</span>
+                    <span>Download CSV</span>
+                  </button>
+                  <button
+                    id="send-volcano-btn"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md bg-primary text-white px-3 py-1 text-xs font-semibold hover:bg-primary/90"
+                  >
+                    <span class="material-symbols-outlined text-sm">open_in_new</span>
+                    <span>Open in Volcano/MA</span>
+                  </button>
+                </div>
+              </div>
+              <div class="flex-1 overflow-auto p-4 space-y-4">
+                <!-- Table first -->
+                <div id="deseq-table-container" class="mt-1"></div>
+
+                <!-- Raw JSON (collapsed) -->
+                <details class="bg-black/5 dark:bg-black/30 rounded-md p-3">
+                  <summary class="text-xs font-semibold cursor-pointer text-gray-700 dark:text-gray-200">
+                    Raw JSON response (debug)
+                  </summary>
+                  <pre
+                    id="deseq-output"
+                    class="mt-2 text-xs whitespace-pre-wrap font-mono"
+                  ></pre>
+                </details>
+              </div>
+            </div>
+
+            <div
+              id="loading-indicator"
+              class="absolute inset-0 items-center justify-center bg-black/10 dark:bg-black/30"
+            >
+              <div
+                class="flex flex-col items-center gap-3 rounded-lg bg-white/90 dark:bg-background-dark/90 px-4 py-3 shadow-md"
+              >
+                <div
+                  class="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"
+                ></div>
+                <p class="text-xs text-gray-700 dark:text-gray-200">
+                  Running DESeq2…
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

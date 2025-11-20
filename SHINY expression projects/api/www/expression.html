@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Gene Expression Visualization</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              primary: "#2C097F",
+              "background-light": "#fafafa",
+              "background-dark": "#151022",
+              "sidebar-dark": "#131118"
+            },
+            fontFamily: {
+              display: ["system-ui", "sans-serif"]
+            }
+          }
+        }
+      };
+    </script>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@400;500;700&display=swap"
+    />
+    <script>
+      const storedSidebarPref = localStorage.getItem("expression-sidebar");
+      function updateThemeIcon(isDark) {
+        const icon = document.getElementById("theme-icon");
+        if (icon) icon.textContent = isDark ? "light_mode" : "dark_mode";
+      }
+      function updateSidebarToggle(isHidden) {
+        const icon = document.getElementById("sidebar-toggle-icon");
+        const label = document.getElementById("sidebar-toggle-label");
+        if (icon) icon.textContent = isHidden ? "chevron_right" : "chevron_left";
+        if (label) label.textContent = isHidden ? "Show Sidebar" : "Hide Sidebar";
+      }
+      function setSidebarHidden(isHidden) {
+        const sidebar = document.getElementById("app-sidebar");
+        if (sidebar) sidebar.classList.toggle("hidden", isHidden);
+        document.body.dataset.sidebarHidden = isHidden ? "true" : "false";
+        updateSidebarToggle(isHidden);
+      }
+      function toggleSidebar() {
+        const shouldHide = document.body?.dataset.sidebarHidden !== "true";
+        setSidebarHidden(shouldHide);
+        localStorage.setItem("expression-sidebar", shouldHide ? "hidden" : "visible");
+      }
+      (function () {
+        const stored = localStorage.getItem("theme");
+        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const root = document.documentElement;
+        const useDark = stored === "dark" || (!stored && prefersDark);
+        root.classList.toggle("dark", useDark);
+      })();
+      function toggleTheme() {
+        const root = document.documentElement;
+        const isDark = root.classList.toggle("dark");
+        localStorage.setItem("theme", isDark ? "dark" : "light");
+        updateThemeIcon(isDark);
+      }
+      document.addEventListener("DOMContentLoaded", () => {
+        updateThemeIcon(document.documentElement.classList.contains("dark"));
+        setSidebarHidden(storedSidebarPref === "hidden");
+      });
+    </script>
+    <style>
+      #loading-indicator {
+        display: none;
+      }
+      body[data-loading="true"] #loading-indicator {
+        display: flex;
+      }
+      .no-border {
+        border: none !important;
+      }
+      #plot-image {
+        transform-origin: center center;
+        transition: transform 0.15s ease;
+      }
+      #app-sidebar nav {
+        scrollbar-width: none;
+      }
+      #app-sidebar nav::-webkit-scrollbar {
+        width: 6px;
+      }
+      #app-sidebar nav::-webkit-scrollbar-track {
+        background: transparent;
+        border-radius: 999px;
+      }
+      #app-sidebar nav::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #c8bbf8, #8b6fe4);
+        border-radius: 999px;
+      }
+      body.dark #app-sidebar nav::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #5f47c4, #8b6fe4);
+      }
+      #app-sidebar nav {
+        scrollbar-color: rgba(124, 95, 219, 0.7) transparent;
+      }
+    </style>
+    <script defer src="/expression.js"></script>
+  </head>
+  <body class="h-screen bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-100">
+    <div class="flex h-full">
+      <aside id="app-sidebar" class="w-[390px] shrink-0 border-r border-gray-200/70 dark:border-white/10 bg-white/90 dark:bg-sidebar-dark backdrop-blur flex flex-col px-6 py-6 gap-6 overflow-y-auto">
+        <div class="flex flex-col">
+          <h1 class="text-gray-900 dark:text-white text-base font-semibold">
+            Gene Expression
+          </h1>
+          <p class="text-gray-500 dark:text-gray-400 text-sm">
+            Boxplots · Bar Graphs · Heatmaps
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-4">
+            <p class="text-lg font-semibold text-gray-900 dark:text-white">File Upload</p>
+            <div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between">
+              <div class="flex items-center gap-4">
+                <div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12">
+                  <span class="material-symbols-outlined">upload_file</span>
+                </div>
+                <div class="flex flex-col justify-center">
+                  <p class="text-zinc-900 text-base font-medium leading-normal line-clamp-1">Data (Normalized Counts)</p>
+                  <p class="text-zinc-500 text-sm font-normal leading-normal line-clamp-2">Upload a .CSV or .txt file</p>
+                </div>
+              </div>
+              <div class="shrink-0">
+                <input id="expression-file" type="file" accept=".csv,.txt" class="hidden" />
+                <button type="button" onclick="document.getElementById('expression-file').click()" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-8 px-4 bg-zinc-100 text-zinc-700 text-sm font-medium leading-normal w-fit hover:bg-zinc-200 transition-colors">
+                  <span class="truncate">Browse</span>
+                </button>
+              </div>
+            </div>
+            <p id="expression-status" class="px-4 text-xs text-gray-500 dark:text-gray-400">No file selected.</p>
+            <div class="flex items-center gap-4 px-4 min-h-[72px] py-2 justify-between">
+              <div class="flex items-center gap-4">
+                <div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-12">
+                  <span class="material-symbols-outlined">upload_file</span>
+                </div>
+                <div class="flex flex-col justify-center">
+                  <p class="text-zinc-900 text-base font-medium leading-normal line-clamp-1">Attributes</p>
+                  <p class="text-zinc-500 text-sm font-normal leading-normal line-clamp-2">Upload a .csv or .txt file</p>
+                </div>
+              </div>
+              <div class="shrink-0">
+                <input id="attribute-file" type="file" accept=".csv,.txt" class="hidden" />
+                <button type="button" onclick="document.getElementById('attribute-file').click()" class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-8 px-4 bg-zinc-100 text-zinc-700 text-sm font-medium leading-normal w-fit hover:bg-zinc-200 transition-colors">
+                  <span class="truncate">Browse</span>
+                </button>
+              </div>
+            </div>
+            <p id="attribute-status" class="px-4 text-xs text-gray-500 dark:text-gray-400">No file selected.</p>
+            <p id="metadata-status" class="text-xs text-gray-500 dark:text-gray-400">Upload both files to begin.</p>
+          </div>
+
+          <details class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group" open>
+            <summary class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-gray-700 dark:text-white text-2xl" aria-hidden="true">tune</span>
+                <p class="text-gray-900 dark:text-white text-sm font-medium">Plot Options</p>
+              </div>
+              <span class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180" aria-hidden="true">expand_more</span>
+            </summary>
+            <div class="pb-4 pt-1 flex flex-col gap-3">
+              <label class="flex flex-col gap-1 text-xs text-gray-600 dark:text-gray-300 font-medium">
+                <span>Plot Type</span>
+                <select id="plot-type" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm text-gray-900 dark:text-white">
+                  <option value="Boxplot">Boxplot</option>
+                  <option value="Bar Graph">Bar Graph</option>
+                  <option value="Heatmap">Heatmap</option>
+                </select>
+              </label>
+              <label data-plot-visible="Boxplot, Bar Graph" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input id="remove-x" type="checkbox" class="rounded border-gray-300 dark:border-gray-600">
+                Remove X-axis labels
+              </label>
+              <label data-plot-visible="Bar Graph" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input id="include-error" type="checkbox" class="rounded border-gray-300 dark:border-gray-600">
+                Include error bars (Bar Graph)
+              </label>
+              <div data-plot-visible="Heatmap">
+                <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Color Scheme (Heatmap)</label>
+                <select id="color-scheme" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm">
+                  <option value="RdYlBu">RdYlBu</option>
+                  <option value="PuBuGn">PuBuGn</option>
+                  <option value="Spectral">Spectral</option>
+                </select>
+              </div>
+              <label data-plot-visible="Heatmap" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input id="cluster-rows" type="checkbox" class="rounded border-gray-300 dark:border-gray-600" checked>
+                Cluster rows (Heatmap)
+              </label>
+              <label data-plot-visible="Heatmap" class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input id="cluster-columns" type="checkbox" class="rounded border-gray-300 dark:border-gray-600" checked>
+                Cluster columns (Heatmap)
+              </label>
+            </div>
+          </details>
+
+          <details class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group">
+            <summary class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-gray-700 dark:text-white text-2xl" aria-hidden="true">biotech</span>
+                <p class="text-gray-900 dark:text-white text-sm font-medium">Genes &amp; Attributes</p>
+              </div>
+              <span class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180" aria-hidden="true">expand_more</span>
+            </summary>
+            <div class="pb-4 pt-1 flex flex-col gap-3">
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Genes</label>
+              <select id="gene-select" multiple size="6" class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"></select>
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Attribute Column</label>
+              <select id="attribute-column" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"></select>
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Attribute Values</label>
+              <select id="attribute-values" multiple size="5" class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm"></select>
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Group by</label>
+              <select id="group-column" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm">
+                <option value="">None</option>
+              </select>
+            </div>
+          </details>
+
+          <details class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group">
+            <summary class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-gray-700 dark:text-white text-2xl" aria-hidden="true">text_fields</span>
+                <p class="text-gray-900 dark:text-white text-sm font-medium">Labels & Axis</p>
+              </div>
+              <span class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180" aria-hidden="true">expand_more</span>
+            </summary>
+            <div class="pb-4 pt-1 flex flex-col gap-3">
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">X axis label</label>
+              <input id="text-xaxis" type="text" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Y axis label</label>
+              <input id="text-yaxis" type="text" value="Log2 Normalized Counts" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Y min</label>
+                  <input id="y-min" type="number" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Y max</label>
+                  <input id="y-max" type="number" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+                </div>
+              </div>
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Title</label>
+              <input id="title-input" type="text" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Subtitle</label>
+              <input id="subtitle-input" type="text" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Legend title</label>
+              <input id="legend-title" type="text" value="Legend" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Legend position</label>
+              <select id="legend-position" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm">
+                <option value="right">Right</option>
+                <option value="left">Left</option>
+                <option value="top">Top</option>
+                <option value="bottom">Bottom</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+          </details>
+
+          <details class="flex flex-col rounded-lg border border-gray-200 dark:border-white/10 bg-transparent px-4 group">
+            <summary class="flex cursor-pointer items-center justify-between gap-6 py-3 list-none">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-gray-700 dark:text-white text-2xl" aria-hidden="true">download</span>
+                <p class="text-gray-900 dark:text-white text-sm font-medium">Export</p>
+              </div>
+              <span class="material-symbols-outlined text-gray-700 dark:text-white transition-transform group-open:rotate-180" aria-hidden="true">expand_more</span>
+            </summary>
+            <div class="pb-4 pt-1 flex flex-col gap-3">
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">File name</label>
+              <input id="file-name" type="text" value="expression_plot" class="h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Width</label>
+                  <input id="width-input" type="number" value="11" step="0.5" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Height</label>
+                  <input id="height-input" type="number" value="8" step="0.5" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">Units</label>
+                  <select id="units-input" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm">
+                    <option value="in">in</option>
+                    <option value="cm">cm</option>
+                    <option value="mm">mm</option>
+                    <option value="px">px</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">DPI</label>
+                  <input id="dpi-input" type="number" value="300" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm" />
+                </div>
+              </div>
+              <label class="block text-xs text-gray-500 dark:text-gray-300 mb-1">File type</label>
+              <select id="file-type" class="w-full h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-background-dark/40 px-2 text-sm">
+                <option value="png">png</option>
+                <option value="jpeg">jpeg</option>
+                <option value="tiff">tiff</option>
+                <option value="pdf">pdf</option>
+                <option value="svg">svg</option>
+              </select>
+              <button
+                id="export-btn"
+                class="inline-flex items-center justify-center rounded-md bg-primary text-white text-sm font-semibold h-10 px-4 hover:bg-primary/90"
+              >
+                Export Plot
+              </button>
+            </div>
+          </details>
+        </div>
+      </aside>
+
+      <main class="flex-1 p-8 overflow-y-auto">
+        <div class="flex flex-col h-full relative">
+          <div class="flex justify-end gap-2 mb-4">
+            <div class="flex gap-2">
+              <a
+                href="/"
+                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+              >
+                <span class="material-symbols-outlined text-sm">home</span>
+                <span>Home</span>
+              </a>
+              <button
+                type="button"
+                onclick="toggleTheme()"
+                class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+              >
+                <span id="theme-icon" class="material-symbols-outlined text-sm">dark_mode</span>
+                <span>Theme</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              onclick="toggleSidebar()"
+              class="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-white/10 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 shadow-[0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.45)]"
+            >
+              <span id="sidebar-toggle-icon" class="material-symbols-outlined text-sm">chevron_left</span>
+              <span id="sidebar-toggle-label">Hide Sidebar</span>
+            </button>
+          </div>
+          <div
+            id="plot-container"
+            data-plot=""
+            class="flex-1 flex items-center justify-center rounded-xl border border-dashed border-gray-300/70 dark:border-white/20 bg-white/60 dark:bg-background-dark/40 relative overflow-hidden"
+          >
+            <div
+              data-empty
+              class="flex flex-col items-center gap-6 px-6 py-10 text-center"
+            >
+              <div class="flex flex-col items-center gap-2">
+                <p class="text-gray-900 dark:text-white text-lg font-semibold tracking-[-0.015em]">
+                  Upload your data to begin
+                </p>
+                <p class="text-gray-500 dark:text-gray-400 text-sm max-w-md leading-relaxed">
+                  Upload your expression matrix and attributes file in the sidebar, then choose genes, attributes, and styling. Your plots will appear here.
+                </p>
+              </div>
+              <span class="material-symbols-outlined text-5xl text-gray-400 dark:text-gray-500" aria-hidden="true">monitoring</span>
+            </div>
+            <div
+              id="loading-indicator"
+              class="absolute inset-0 flex items-center justify-center bg-black/10 dark:bg-black/30"
+            >
+              <div class="flex flex-col items-center gap-3 rounded-lg bg-white/90 dark:bg-background-dark/90 px-4 py-3 shadow-md">
+                <div class="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-xs text-gray-700 dark:text-gray-200">Generating plot…</p>
+              </div>
+            </div>
+            <img
+              id="plot-image"
+              alt="Gene expression plot"
+              class="max-h-full max-w-full rounded-lg shadow-sm hidden"
+              draggable="false"
+            />
+          </div>
+          <div
+            id="plot-zoom-controls"
+            class="absolute bottom-6 right-6 flex divide-x divide-gray-200 dark:divide-white/10 rounded-full border border-gray-200 dark:border-white/10 bg-white/95 dark:bg-background-dark/90 shadow-lg backdrop-blur-sm hidden"
+          >
+            <button
+              id="zoom-in"
+              type="button"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span class="material-symbols-outlined text-base">add</span>
+            </button>
+            <button
+              id="zoom-out"
+              type="button"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span class="material-symbols-outlined text-base">remove</span>
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

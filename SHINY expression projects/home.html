@@ -16,7 +16,8 @@
       rel="stylesheet"
     />
     <script id="tailwind-config">
-      tailwind.config = {
+      window.tailwind = window.tailwind || {};
+      window.tailwind.config = {
         darkMode: "class",
         theme: {
           extend: {
@@ -56,7 +57,9 @@
       };
       (function () {
         const stored = localStorage.getItem(storageKey);
-        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const prefersDark =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches;
         const root = document.documentElement;
         const useDark = stored === "dark" || (!stored && prefersDark);
         root.classList.toggle("dark", useDark);
@@ -73,16 +76,22 @@
       });
     </script>
   </head>
-  <body class="font-display bg-background-light text-text-light dark:bg-[#0E0A18] dark:text-text-dark">
+  <body
+    class="font-display bg-background-light text-text-light dark:bg-[#0E0A18] dark:text-text-dark"
+  >
     <div class="relative flex min-h-screen flex-col">
       <div class="flex flex-1 justify-center py-5 sm:px-10 lg:px-20 xl:px-40">
         <div class="flex w-full max-w-6xl flex-col flex-1">
-          <header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-border-light dark:border-border-dark px-6 sm:px-10 py-4">
+          <header
+            class="flex items-center justify-between whitespace-nowrap border-b border-solid border-border-light dark:border-border-dark px-6 sm:px-10 py-4"
+          >
             <div class="flex items-center gap-4">
-              
               <div>
-                
-                <h1 class="text-text-light dark:text-text-dark text-3xl sm:text-4xl font-bold leading-tight tracking-tight">Bioinformatics Visualization Suite</h1>
+                <h1
+                  class="text-text-light dark:text-text-dark text-3xl sm:text-4xl font-bold leading-tight tracking-tight"
+                >
+                  Bioinformatics Visualization Suite
+                </h1>
               </div>
             </div>
             <div class="flex items-center gap-2">
@@ -91,14 +100,20 @@
                 onclick="toggleTheme()"
                 class="inline-flex items-center gap-2 rounded-full border border-border-light dark:border-border-dark px-4 py-2 text-xs font-semibold text-text-muted-light dark:text-text-muted-dark bg-white/70 dark:bg-background-dark/40 hover:border-primary hover:text-primary transition-colors"
               >
-                <span id="home-theme-icon" class="material-symbols-outlined text-base">dark_mode</span>
+                <span
+                  id="home-theme-icon"
+                  class="material-symbols-outlined text-base"
+                  >dark_mode</span
+                >
                 Theme
               </button>
               <a
                 class="inline-flex items-center gap-2 rounded-full border border-border-light dark:border-border-dark px-4 py-2 text-xs font-semibold text-text-muted-light dark:text-text-muted-dark hover:border-primary hover:text-primary transition-colors"
                 href="#tools"
               >
-                <span class="material-symbols-outlined text-base">rocket_launch</span>
+                <span class="material-symbols-outlined text-base"
+                  >rocket_launch</span
+                >
                 Explore tools
               </a>
             </div>
@@ -106,17 +121,30 @@
 
           <main class="flex-grow">
             <section class="relative px-4 py-12 sm:px-6 md:py-16">
-              <div class="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-secondary/20 dark:from-primary/30 dark:to-secondary/40 blur-3xl pointer-events-none"></div>
-              <div class="relative rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1C1233] px-6 py-10 shadow-xl shadow-primary/10">
+              <div
+                class="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-secondary/20 dark:from-primary/30 dark:to-secondary/40 blur-3xl pointer-events-none"
+              ></div>
+              <div
+                class="relative rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1C1233] px-6 py-10 shadow-xl shadow-primary/10"
+              >
                 <div class="flex flex-col gap-6 text-center">
-                  <p class="inline-flex items-center justify-center gap-2 rounded-full bg-primary/10 text-primary dark:text-white text-xs font-semibold uppercase tracking-[0.2em] px-4 py-1 self-center">
+                  <p
+                    class="inline-flex items-center justify-center gap-2 rounded-full bg-primary/10 text-primary dark:text-white text-xs font-semibold uppercase tracking-[0.2em] px-4 py-1 self-center"
+                  >
                     Research ready
                   </p>
-                  <h2 class="text-text-light dark:text-text-dark text-4xl sm:text-5xl font-black leading-tight tracking-[-0.035em]">
-                    Transform raw genomics data into beautiful visualizations
+                  <h2
+                    class="text-text-light dark:text-text-dark text-4xl sm:text-5xl font-black leading-tight tracking-[-0.035em]"
+                  >
+                    Transform genomics data into beautiful visualizations
                   </h2>
-                  <p class="text-text-muted-light dark:text-text-muted-dark text-lg leading-relaxed max-w-3xl mx-auto">
-                    Launch guided visualization workflows that streamline styling, annotations, and exports—so you can explore your data and share publication-ready plots without leaving the browser.
+                  <p
+                    class="text-text-muted-light dark:text-text-muted-dark text-lg leading-relaxed max-w-3xl mx-auto"
+                  >
+                    Launch guided visualization workflows that streamline
+                    styling, annotations, and plot exports. Explore your data
+                    and share publication-ready plots without leaving the
+                    browser.
                   </p>
                   <div class="flex flex-wrap items-center justify-center gap-3">
                     <a
@@ -124,7 +152,9 @@
                       class="inline-flex items-center gap-2 rounded-full bg-primary text-white text-sm font-semibold px-6 py-3 shadow-lg shadow-primary/30 hover:bg-primary/90 transition"
                     >
                       Launch Volcano / MA Plot
-                      <span class="material-symbols-outlined text-base">north_east</span>
+                      <span class="material-symbols-outlined text-base"
+                        >north_east</span
+                      >
                     </a>
                     <a
                       href="#tools"
@@ -139,21 +169,108 @@
 
             <section id="tools" class="px-4 pb-16 sm:px-6">
               <div class="grid grid-cols-1 gap-8 lg:grid-cols-2">
-                <article class="flex flex-col gap-5 rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1A122C] p-6 shadow-lg shadow-primary/15 hover:shadow-primary/30 transition-shadow">
-                  <div class="flex items-center gap-3 text-primary dark:text-white">
-                    <span class="material-symbols-outlined text-3xl">scatter_plot</span>
-                    <h3 class="text-2xl font-bold leading-tight">Volcano/MA Plot Generator</h3>
+                <!-- DESeq2 card FIRST -->
+                <article
+                  class="flex flex-col gap-5 rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1A122C] p-6 shadow-lg shadow-primary/15 hover:shadow-primary/30 transition-shadow"
+                >
+                  <div
+                    class="flex items-center gap-3 text-primary dark:text-white"
+                  >
+                    <span class="material-symbols-outlined text-3xl"
+                      >analytics</span
+                    >
+                    <h3 class="text-2xl font-bold leading-tight">
+                      DESeq2 Differential Expression
+                    </h3>
                   </div>
-                  <p class="text-text-muted-light dark:text-white/80 text-base leading-relaxed">
-                    Visualize differential expression with interactive thresholds, highlight genes of interest, and export high-resolution figures in multiple formats without opening another design tool.
+                  <p
+                    class="text-text-muted-light dark:text-white/80 text-base leading-relaxed"
+                  >
+                    Run differential expression analysis directly in your
+                    browser. Upload raw count matrices, define sample groups,
+                    and generate DE results ready for volcano plots, MA plots,
+                    and downstream QC tools.
                   </p>
-                  <dl class="grid grid-cols-1 gap-3 text-sm text-text-muted-light dark:text-text-muted-dark">
-                    <div class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5">
-                      <dt class="font-semibold text-text-light dark:text-white">Best for</dt>
-                      <dd>Transcriptomics, proteomics, biomarker discovery</dd>
+                  <dl
+                    class="grid grid-cols-1 gap-3 text-sm text-text-muted-light dark:text-text-muted-dark"
+                  >
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Best for
+                      </dt>
+                      <dd>Bulk RNA-seq DE analysis</dd>
                     </div>
-                    <div class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5">
-                      <dt class="font-semibold text-text-light dark:text-white">Input</dt>
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Input
+                      </dt>
+                      <dd>Count matrix (CSV/TSV)</dd>
+                    </div>
+                  </dl>
+                  <a
+                    class="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-primary text-white text-base font-semibold h-12 px-6 shadow-lg shadow-primary/40 hover:bg-primary/90 transition"
+                    href="/deseq"
+                  >
+                    Launch DESeq2 Tool
+                    <span class="material-symbols-outlined text-base"
+                      >arrow_outward</span
+                    >
+                  </a>
+                </article>
+
+                <!-- Volcano / MA card -->
+                <article
+                  class="flex flex-col gap-5 rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1A122C] p-6 shadow-lg shadow-primary/15 hover:shadow-primary/30 transition-shadow"
+                >
+                  <div
+                    class="flex items-center gap-3 text-primary dark:text-white"
+                  >
+                    <span class="material-symbols-outlined text-3xl"
+                      >scatter_plot</span
+                    >
+                    <h3 class="text-2xl font-bold leading-tight">
+                      Volcano/MA Plot Generator
+                    </h3>
+                  </div>
+                  <p
+                    class="text-text-muted-light dark:text-white/80 text-base leading-relaxed"
+                  >
+                    Visualize differential expression with interactive
+                    thresholds, highlight genes of interest, and export
+                    high-resolution figures in multiple formats without opening
+                    another design tool.
+                  </p>
+                  <dl
+                    class="grid grid-cols-1 gap-3 text-sm text-text-muted-light dark:text-text-muted-dark"
+                  >
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Best for
+                      </dt>
+                      <dd>
+                        Transcriptomics, proteomics, biomarker discovery
+                      </dd>
+                    </div>
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Input
+                      </dt>
                       <dd>CSV or TXT with log2 fold change and p-values</dd>
                     </div>
                   </dl>
@@ -162,49 +279,78 @@
                     href="/volcano"
                   >
                     Launch Plot Generator
-                    <span class="material-symbols-outlined text-base">arrow_outward</span>
+                    <span class="material-symbols-outlined text-base"
+                      >arrow_outward</span
+                    >
                   </a>
                 </article>
 
-      <article class="flex flex-col gap-5 rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1A122C] p-6 shadow-lg shadow-primary/15 hover:shadow-primary/30 transition-shadow">
-        <div class="flex items-center gap-3 text-primary dark:text-white">
-                    <span class="material-symbols-outlined text-3xl">dataset</span>
-                    <h3 class="text-2xl font-bold leading-tight">Gene Expression Visualization</h3>
+                <!-- Gene Expression card -->
+                <article
+                  class="flex flex-col gap-5 rounded-3xl border border-border-light dark:border-white/10 bg-card-light dark:bg-[#1A122C] p-6 shadow-lg shadow-primary/15 hover:shadow-primary/30 transition-shadow"
+                >
+                  <div
+                    class="flex items-center gap-3 text-primary dark:text-white"
+                  >
+                    <span class="material-symbols-outlined text-3xl"
+                      >dataset</span
+                    >
+                    <h3 class="text-2xl font-bold leading-tight">
+                      Gene Expression Visualization
+                    </h3>
                   </div>
-                  <p class="text-text-muted-light dark:text-white/80 text-base leading-relaxed">
-                    Compare cohorts via boxplots, barplots, and heatmaps, then fine-tune colors, labels, and legends before exporting finished graphics for reports or presentations.
+                  <p
+                    class="text-text-muted-light dark:text-white/80 text-base leading-relaxed"
+                  >
+                    Compare cohorts via boxplots, barplots, and heatmaps, then
+                    fine-tune colors, labels, and legends before exporting
+                    finished graphics for reports or presentations.
                   </p>
-                  <dl class="grid grid-cols-1 gap-3 text-sm text-text-muted-light dark:text-text-muted-dark">
-                    <div class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5">
-                      <dt class="font-semibold text-text-light dark:text-white">Best for</dt>
+                  <dl
+                    class="grid grid-cols-1 gap-3 text-sm text-text-muted-light dark:text-text-muted-dark"
+                  >
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Best for
+                      </dt>
                       <dd>Bulk RNA-seq, custom gene panels, QC dashboards</dd>
                     </div>
-                    <div class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5">
-                      <dt class="font-semibold text-text-light dark:text-white">Input</dt>
+                    <div
+                      class="rounded-2xl border border-dashed border-border-light dark:border-white/15 px-4 py-3 bg-white/40 dark:bg-white/5"
+                    >
+                      <dt
+                        class="font-semibold text-text-light dark:text-white"
+                      >
+                        Input
+                      </dt>
                       <dd>Expression matrix + sample metadata</dd>
                     </div>
                   </dl>
                   <a
                     class="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-primary text-white text-base font-semibold h-12 px-6 shadow-lg shadow-primary/40 hover:bg-primary/90 transition"
-                    href="#"
+                    href="/expression"
                   >
                     Launch Visualization Tool
-                    <span class="material-symbols-outlined text-base">arrow_outward</span>
+                    <span class="material-symbols-outlined text-base"
+                      >arrow_outward</span
+                    >
                   </a>
                 </article>
               </div>
             </section>
           </main>
 
-          <footer class="px-6 sm:px-10 py-10 border-t border-border-light dark:border-border-dark">
-            <div class="flex flex-col gap-4 text-center text-sm text-text-muted-light dark:text-text-muted-dark">
-              <div class="flex flex-wrap justify-center gap-4">
-                <a class="hover:text-primary transition-colors" href="#">Privacy</a>
-                <a class="hover:text-primary transition-colors" href="#">Terms</a>
-                <a class="hover:text-primary transition-colors" href="#">Support</a>
-                <a class="hover:text-primary transition-colors" href="#">GitHub</a>
-              </div>
-              <p>© 2024 BioViz Suite. Built for modern bioinformatics teams.</p>
+          <footer
+            class="px-6 sm:px-10 py-10 border-t border-border-light dark:border-border-dark"
+          >
+            <div
+              class="flex flex-col gap-4 text-center text-sm text-text-muted-light dark:text-text-muted-dark"
+            >
+              <p>BENG 183 Project: Hubert Phan, Courtney Woodhall, Satvik Bandi</p>
             </div>
           </footer>
         </div>

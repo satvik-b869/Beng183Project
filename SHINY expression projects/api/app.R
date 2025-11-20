@@ -1,3 +1,5 @@
+.libPaths(c(file.path("..", ".Rlibs"), .libPaths()))
+
 library(plumber)
 library(tidyverse)
 library(janitor)
@@ -8,6 +10,15 @@ library(jsonlite)
 library(DBI)
 library(RSQLite)
 library(magick)
+library(gplots)
+library(DESeq2)
+
+
+source("gene_expression_module.R")
+
+if (!exists("%||%", mode = "function")) {
+  `%||%` <- function(x, y) if (!is.null(x) && length(x)) x else y
+}
 
 data_dir <- "data"
 dir.create(data_dir, showWarnings = FALSE, recursive = TRUE)
@@ -119,14 +130,53 @@ default_params <- list(
   zoom = 1
 )
 
+expression_defaults <- list(
+  plot_type = "Boxplot",
+  remove_x_axis_labels = FALSE,
+  include_error_bars = FALSE,
+  attribute_column = "",
+  selected_values = list(),
+  group_by_column = "",
+  selected_gene = list(),
+  text_xaxis = "",
+  text_yaxis = "Log2 Normalized Counts",
+  title = "",
+  subtitle = "",
+  legend_title = "Legend",
+  legendPosition = "right",
+  color_scheme = "RdYlBu",
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  y_min = NA,
+  y_max = NA,
+  width = 11,
+  height = 8,
+  units = "in",
+  dpi = 300,
+  file_name = "expression_plot",
+  file_type = "png",
+  colormodel = "RGB",
+  zoom = 1,
+  textlab_size_axis = 14,
+  textlab_size_title = 23,
+  textlab_size_subtitle = 18,
+  textlab_size_legend = 14,
+  textlab_size_legend_content = 14,
+  textlab_color_axis = "#000000",
+  value_order = list(),
+  value_order_barplot = list()
+)
+
 safe_nzchar <- function(x) {
   is.character(x) && length(x) == 1 && !is.na(x) && nzchar(x)
 }
 
 ensure_numeric <- function(value, default) {
-  if (is.null(value) || value == "") return(default)
+  if (is.null(value) || length(value) == 0) return(default)
+  if (all(is.na(value))) return(default)
+  if (is.character(value) && all(trimws(value) == "")) return(default)
   maybe_num <- suppressWarnings(as.numeric(value))
-  if (is.na(maybe_num)) default else maybe_num
+  if (length(maybe_num) == 0 || all(is.na(maybe_num))) default else maybe_num
 }
 
 ensure_boolean <- function(value, default = FALSE) {
@@ -137,6 +187,21 @@ ensure_boolean <- function(value, default = FALSE) {
     return(val %in% c("true", "1", "yes", "on"))
   }
   as.logical(value)
+}
+
+write_part_to_tempfile <- function(part, fallback_ext = NULL) {
+  if (is.null(part) || is.null(part$value)) {
+    stop("Upload part is missing file data.")
+  }
+  filename <- part$filename %||% ""
+  ext <- tolower(tools::file_ext(filename))
+  if (!nzchar(ext) && !is.null(fallback_ext)) {
+    ext <- fallback_ext
+  }
+  fileext <- if (nzchar(ext)) paste0(".", ext) else ""
+  tmp_path <- tempfile(fileext = fileext)
+  writeBin(part$value, tmp_path)
+  tmp_path
 }
 
 normalize_params <- function(raw) {
@@ -176,6 +241,40 @@ normalize_params <- function(raw) {
   params
 }
 
+normalize_expression_params <- function(raw) {
+  params <- modifyList(expression_defaults, raw)
+  params$plot_type <- params$plot_type %||% "Boxplot"
+  params$remove_x_axis_labels <- ensure_boolean(params$remove_x_axis_labels, FALSE)
+  params$include_error_bars <- ensure_boolean(params$include_error_bars, FALSE)
+  params$cluster_rows <- ensure_boolean(params$cluster_rows, TRUE)
+  params$cluster_columns <- ensure_boolean(params$cluster_columns, TRUE)
+  params$text_xaxis <- params$text_xaxis %||% ""
+  params$text_yaxis <- params$text_yaxis %||% "Log2 Normalized Counts"
+  params$title <- params$title %||% ""
+  params$subtitle <- params$subtitle %||% ""
+  params$legend_title <- params$legend_title %||% "Legend"
+  params$legendPosition <- params$legendPosition %||% "right"
+  params$color_scheme <- params$color_scheme %||% "RdYlBu"
+  params$group_by_column <- params$group_by_column %||% ""
+  params$attribute_column <- params$attribute_column %||% ""
+  params$selected_values <- params$selected_values %||% list()
+  params$selected_gene <- params$selected_gene %||% list()
+  params$value_order <- params$value_order %||% list()
+  params$value_order_barplot <- params$value_order_barplot %||% list()
+  params$selected_gene <- as.character(unlist(params$selected_gene))
+  params$selected_values <- as.character(unlist(params$selected_values))
+  params$value_order <- as.character(unlist(params$value_order))
+  params$value_order_barplot <- as.character(unlist(params$value_order_barplot))
+  if (!length(params$value_order)) params$value_order <- NULL
+  if (!length(params$value_order_barplot)) params$value_order_barplot <- NULL
+  params$width <- ensure_numeric(params$width, expression_defaults$width)
+  params$height <- ensure_numeric(params$height, expression_defaults$height)
+  params$dpi <- ensure_numeric(params$dpi, expression_defaults$dpi)
+  params$y_min <- ensure_numeric(params$y_min, params$y_min)
+  params$y_max <- ensure_numeric(params$y_max, params$y_max)
+  params
+}
+
 convert_to_inches <- function(value, units) {
   if (units == "in") {
     value
@@ -212,13 +311,16 @@ read_uploaded_data <- function(datapath) {
     df <- dplyr::rename(df, gene_id = geneid)
   }
   
-  expected <- c("base_mean", "log2fold_change", "padj", "symbol", "gene_id")
+  expected <- c("base_mean", "log2fold_change", "padj", "symbol")
   if (!all(expected %in% colnames(df))) {
     stop(paste(
       "Uploaded file is missing required columns after cleaning/renaming.",
       "Required:", paste(expected, collapse = ", "),
       "Have:", paste(colnames(df), collapse = ", ")
     ))
+  }
+  if (!"gene_id" %in% colnames(df)) {
+    df$gene_id <- NA_character_
   }
   
   df
@@ -508,6 +610,154 @@ save_plot_image <- function(plot_obj, params, file_path, file_type = "png") {
   ggsave(file_path, plot = plot_obj, width = width_value, height = height_value, units = units, dpi = params$dpi, device = file_type)
 }
 
+build_expression_plot_bundle <- function(expr_df, attr_df, params) {
+  long_data <- prepare_expression_long(
+    expr_df,
+    attr_df,
+    params$selected_gene,
+    params$attribute_column,
+    params$selected_values,
+    params$group_by_column
+  )
+  colors <- expression_group_colors(long_data)
+  axis_limits <- expression_axis_limits(long_data)
+  if (is.null(params$y_min) || is.na(params$y_min)) params$y_min <- axis_limits$y_min
+  if (is.null(params$y_max) || is.na(params$y_max)) params$y_max <- axis_limits$y_max
+
+  if (identical(params$plot_type, "Heatmap")) {
+    components <- prepare_heatmap_components(
+      long_data,
+      color_scheme = params$color_scheme,
+      cluster_rows = params$cluster_rows,
+      cluster_columns = params$cluster_columns
+    )
+    return(list(kind = "heatmap", components = components, colors = colors, params = params))
+  }
+
+  long_data <- long_data %>%
+    group_by(Gene_Attribute) %>%
+    mutate(
+      Q1 = as.numeric(stats::quantile(NormalizedCounts, 0.25, na.rm = TRUE)),
+      Q3 = as.numeric(stats::quantile(NormalizedCounts, 0.75, na.rm = TRUE)),
+      Min = min(NormalizedCounts, na.rm = TRUE),
+      Max = max(NormalizedCounts, na.rm = TRUE),
+      SD = sd(NormalizedCounts, na.rm = TRUE)
+    ) %>%
+    ungroup()
+
+  text_color <- params$textlab_color_axis %||% "#000000"
+  y_limits <- c(params$y_min, params$y_max)
+
+  plot_obj <- if (identical(params$plot_type, "Bar Graph")) {
+    build_bar_plot(
+      long_data,
+      colors = colors,
+      remove_x_labels = params$remove_x_axis_labels,
+      text_xaxis = params$text_xaxis,
+      text_yaxis = params$text_yaxis,
+      title = params$title,
+      subtitle = params$subtitle,
+      legend_title = params$legend_title,
+      legend_position = params$legend_position %||% "",
+      axis_size = params$textlab_size_axis,
+      title_size = params$textlab_size_title,
+      subtitle_size = params$textlab_size_subtitle,
+      legend_title_size = params$textlab_size_legend,
+      legend_text_size = params$textlab_size_legend_content,
+      text_color = text_color,
+      y_limits = y_limits,
+      sample_order = params$value_order_barplot,
+      facet_column = params$group_by_column,
+      include_error_bars = params$include_error_bars
+    )
+  } else {
+    build_boxplot_plot(
+      long_data,
+      colors = colors,
+      remove_x_labels = params$remove_x_axis_labels,
+      text_xaxis = params$text_xaxis,
+      text_yaxis = params$text_yaxis,
+      title = params$title,
+      subtitle = params$subtitle,
+      legend_title = params$legend_title,
+      legend_position = params$legend_position %||% "",
+      axis_size = params$textlab_size_axis,
+      title_size = params$textlab_size_title,
+      subtitle_size = params$textlab_size_subtitle,
+      legend_title_size = params$textlab_size_legend,
+      legend_text_size = params$textlab_size_legend_content,
+      text_color = text_color,
+      y_limits = y_limits,
+      value_order = params$value_order,
+      facet_column = params$group_by_column
+    )
+  }
+
+  list(kind = "ggplot", plot = plot_obj, params = params)
+}
+
+write_expression_plot_file <- function(bundle, params, file_path, file_type = "png") {
+  if (bundle$kind == "heatmap") {
+    device_call <- switch(
+      file_type,
+      "pdf" = function(...) pdf(...),
+      "svg" = function(...) svg(...),
+      "eps" = function(...) postscript(..., onefile = FALSE, paper = "special"),
+      "tiff" = function(...) tiff(...),
+      "jpeg" = function(...) jpeg(...),
+      function(...) png(...)
+    )
+    device_call(file_path, width = params$width, height = params$height, units = params$units, res = params$dpi)
+    annotation <- bundle$components$annotation
+    color_lookup <- bundle$colors
+    col_side_colors <- color_lookup[annotation$Broad_Group]
+    col_side_colors[is.na(col_side_colors)] <- "#D1D5DB"
+    axis_label_size <- params$textlab_size_axis %||% 14
+    legend_title_size <- params$textlab_size_legend %||% 14
+    legend_text_size <- params$textlab_size_legend_content %||% 14
+    cex_factor <- axis_label_size / 14
+    heatmap.2(
+      bundle$components$matrix,
+      Colv = if (params$cluster_columns) TRUE else FALSE,
+      Rowv = if (params$cluster_rows) TRUE else FALSE,
+      col = bundle$components$palette,
+      ColSideColors = col_side_colors,
+      labRow = rownames(bundle$components$matrix),
+      labCol = colnames(bundle$components$matrix),
+      scale = "none",
+      margins = c(10, 13),
+      cexCol = cex_factor,
+      cexRow = cex_factor,
+      trace = "none",
+      xlab = params$text_xaxis %||% "Samples",
+      ylab = params$text_yaxis %||% "Genes",
+      main = NULL
+    )
+    legend_position <- switch(params$legendPosition %||% "right",
+      "left" = "topleft",
+      "top" = "topright",
+      "bottom" = "bottomleft",
+      "none" = "none",
+      "topright"
+    )
+    if (!identical(legend_position, "none") && length(color_lookup)) {
+      legend(
+        x = legend_position,
+        legend = names(color_lookup),
+        col = unname(color_lookup),
+        pch = 15,
+        pt.cex = 1.5,
+        cex = legend_text_size / 14,
+        title = params$legend_title,
+        title.cex = legend_title_size / 14
+      )
+    }
+    dev.off()
+    return(invisible(TRUE))
+  }
+  save_plot_image(bundle$plot, params, file_path, file_type)
+}
+
 
 #* @parser multi
 #* @post /defaults
@@ -529,9 +779,8 @@ function(req, res) {
       return(list(error = "Data file (data_file) is required."))
     }
 
-    tmp_file <- tempfile(fileext = ".csv")
+    tmp_file <- write_part_to_tempfile(file_part, "csv")
     on.exit(unlink(tmp_file), add = TRUE)
-    writeBin(file_part$value, tmp_file)
 
     df <- read_uploaded_data(tmp_file)
     list(defaults = calculate_plot_defaults(df))
@@ -594,9 +843,7 @@ function(req, res) {
       return(charToRaw(err_json))
     }
     
-    # file_part$value is a raw vector with the file contents
-    tmp_file <- tempfile(fileext = ".csv")
-    writeBin(file_part$value, tmp_file)
+    tmp_file <- write_part_to_tempfile(file_part, "csv")
     
     # payload_part$value is raw JSON
     payload_json <- rawToChar(payload_part$value)
@@ -661,8 +908,7 @@ function(req, res) {
       return(charToRaw(err_json))
     }
     
-    tmp_file <- tempfile(fileext = ".csv")
-    writeBin(file_part$value, tmp_file)
+    tmp_file <- write_part_to_tempfile(file_part, "csv")
     
     payload_json <- rawToChar(payload_part$value)
     params <- normalize_params(jsonlite::fromJSON(payload_json, simplifyVector = TRUE))
@@ -748,10 +994,207 @@ read_file <- function(path) {
   readChar(path, file.info(path)$size)
 }
 
+
+#* @parser multi
+#* @post /expression/metadata
+#* @serializer unboxedJSON
+function(req, res) {
+  tryCatch({
+    parts <- req$body %||% list()
+    get_part <- function(name) {
+      for (p in parts) {
+        if (!is.null(p$name) && identical(p$name, name)) return(p)
+      }
+      NULL
+    }
+    data_part <- get_part("data_file")
+    attr_part <- get_part("attribute_file")
+    if (is.null(data_part) || is.null(attr_part)) {
+      res$status <- 400
+      return(list(error = "Both data_file and attribute_file are required."))
+    }
+    tmp_expr <- write_part_to_tempfile(data_part, "csv")
+    tmp_attr <- write_part_to_tempfile(attr_part, "csv")
+    on.exit(unlink(c(tmp_expr, tmp_attr)), add = TRUE)
+
+    expr_df <- read_expression_matrix(tmp_expr)
+    attr_df <- read_attribute_table(tmp_attr)
+
+    attr_cols <- names(attr_df)[sapply(attr_df, function(col) length(unique(col)) >= 2)]
+    attr_cols <- setdiff(attr_cols, "sample_name")
+    attr_vals <- lapply(attr_cols, function(col) sort(unique(attr_df[[col]])))
+    names(attr_vals) <- attr_cols
+
+    list(
+      genes = sort(unique(expr_df$Symbol)),
+      attribute_columns = attr_cols,
+      attribute_values = attr_vals,
+      defaults = expression_defaults
+    )
+  }, error = function(e) {
+    res$status <- 400
+    list(error = conditionMessage(e))
+  })
+}
+
+
+#* @parser multi
+#* @post /expression/plot
+#* @serializer contentType list(type = "image/png")
+function(req, res) {
+  tryCatch({
+    parts <- req$body %||% list()
+    get_part <- function(name) {
+      for (p in parts) {
+        if (!is.null(p$name) && identical(p$name, name)) return(p)
+      }
+      NULL
+    }
+    data_part <- get_part("data_file")
+    attr_part <- get_part("attribute_file")
+    payload_part <- get_part("payload")
+    if (is.null(data_part) || is.null(attr_part) || is.null(payload_part)) {
+      res$status <- 400
+      res$setHeader("Content-Type", "application/json")
+      err_json <- jsonlite::toJSON(
+        list(error = "data_file, attribute_file, and payload are required."),
+        auto_unbox = TRUE
+      )
+      return(charToRaw(err_json))
+    }
+    tmp_expr <- write_part_to_tempfile(data_part, "csv")
+    tmp_attr <- write_part_to_tempfile(attr_part, "csv")
+    tmp_png <- tempfile(fileext = ".png")
+    on.exit(unlink(c(tmp_expr, tmp_attr, tmp_png)), add = TRUE)
+
+    payload_json <- rawToChar(payload_part$value)
+    params <- normalize_expression_params(fromJSON(payload_json, simplifyVector = TRUE))
+    expr_df <- read_expression_matrix(tmp_expr)
+    attr_df <- read_attribute_table(tmp_attr)
+    # Diagnostics: capture previews and run the same helper used for plotting
+    diag <- list(
+      payload = tryCatch(substr(payload_json, 1, 2000), error = function(e) NULL),
+      expr_preview = tryCatch(utils::head(expr_df, 5), error = function(e) NULL),
+      attr_preview = tryCatch(utils::head(attr_df, 5), error = function(e) NULL),
+      expr_cols = tryCatch(names(expr_df), error = function(e) NULL),
+      attr_cols = tryCatch(names(attr_df), error = function(e) NULL),
+      genes = tryCatch(as.character(params$selected_gene), error = function(e) NULL),
+      attribute_column = tryCatch(as.character(params$attribute_column[1]), error = function(e) NULL),
+      selected_values = tryCatch(as.character(params$selected_values), error = function(e) NULL)
+    )
+
+    diag_long <- tryCatch({
+      prepare_expression_long(
+        expr_df = expr_df,
+        attr_df = attr_df,
+        genes = params$selected_gene,
+        attribute_column = params$attribute_column,
+        selected_values = params$selected_values,
+        group_by_column = params$group_by_column
+      )
+    }, error = function(e) {
+      structure(list(error = conditionMessage(e)), class = "diag_error")
+    })
+
+    if (inherits(diag_long, "diag_error")) {
+      res$status <- 400
+      res$setHeader("Content-Type", "application/json")
+      debug_info <- list(
+        error = diag_long$error,
+        diagnostics = diag
+      )
+      return(charToRaw(jsonlite::toJSON(debug_info, auto_unbox = TRUE, null = "null", dataframe = "rows")))
+    }
+
+    diag$long_preview <- tryCatch(utils::head(diag_long, 20), error = function(e) NULL)
+
+    # If diagnostics passed, proceed to build plot bundle
+    bundle <- build_expression_plot_bundle(expr_df, attr_df, params)
+    write_expression_plot_file(bundle, params, tmp_png, "png")
+    readBin(tmp_png, "raw", n = file.info(tmp_png)$size)
+  }, error = function(e) {
+    message("Expression plot error: ", conditionMessage(e))
+    # Try to include helpful debug info without exposing file contents
+    safe_payload <- tryCatch({ rawToChar(payload_part$value) }, error = function(e) NULL)
+    safe_params <- tryCatch({ if (exists("params")) params else NULL }, error = function(e) NULL)
+    safe_expr_cols <- tryCatch({ if (exists("expr_df")) names(expr_df) else NULL }, error = function(e) NULL)
+    safe_attr_cols <- tryCatch({ if (exists("attr_df")) names(attr_df) else NULL }, error = function(e) NULL)
+    debug_info <- list(
+      error = conditionMessage(e),
+      payload = if (!is.null(safe_payload)) substr(safe_payload, 1, 1000) else NULL,
+      params = if (!is.null(safe_params)) { list(
+        attribute_column = safe_params$attribute_column %||% NULL,
+        selected_values_len = length(safe_params$selected_values %||% list()),
+        selected_gene_len = length(safe_params$selected_gene %||% list())
+      ) } else NULL,
+      expr_cols = safe_expr_cols,
+      attr_cols = safe_attr_cols
+    )
+    res$status <- 400
+    res$setHeader("Content-Type", "application/json")
+    err_json <- jsonlite::toJSON(debug_info, auto_unbox = TRUE, null = "null")
+    charToRaw(err_json)
+  })
+}
+
+
+#* @parser multi
+#* @post /expression/export
+#* @serializer contentType list(type = "application/octet-stream")
+function(req, res) {
+  tryCatch({
+    parts <- req$body %||% list()
+    get_part <- function(name) {
+      for (p in parts) {
+        if (!is.null(p$name) && identical(p$name, name)) return(p)
+      }
+      NULL
+    }
+    data_part <- get_part("data_file")
+    attr_part <- get_part("attribute_file")
+    payload_part <- get_part("payload")
+    if (is.null(data_part) || is.null(attr_part) || is.null(payload_part)) {
+      res$status <- 400
+      res$setHeader("Content-Type", "application/json")
+      err_json <- jsonlite::toJSON(
+        list(error = "data_file, attribute_file, and payload are required."),
+        auto_unbox = TRUE
+      )
+      return(charToRaw(err_json))
+    }
+    tmp_expr <- write_part_to_tempfile(data_part, "csv")
+    tmp_attr <- write_part_to_tempfile(attr_part, "csv")
+
+    payload_json <- rawToChar(payload_part$value)
+    params <- normalize_expression_params(fromJSON(payload_json, simplifyVector = TRUE))
+    file_type <- params$file_type %||% "png"
+    tmp_target <- tempfile(fileext = paste0(".", file_type))
+    on.exit(unlink(c(tmp_expr, tmp_attr, tmp_target)), add = TRUE)
+    expr_df <- read_expression_matrix(tmp_expr)
+    attr_df <- read_attribute_table(tmp_attr)
+    bundle <- build_expression_plot_bundle(expr_df, attr_df, params)
+
+    write_expression_plot_file(bundle, params, tmp_target, file_type)
+    readBin(tmp_target, "raw", n = file.info(tmp_target)$size)
+  }, error = function(e) {
+    message("Expression export error: ", conditionMessage(e))
+    res$status <- 400
+    res$setHeader("Content-Type", "application/json")
+    err_json <- jsonlite::toJSON(list(error = conditionMessage(e)), auto_unbox = TRUE)
+    charToRaw(err_json)
+  })
+}
+
 #* @get /
 #* @serializer html
 function() {
   read_file(file.path("..", "home.html"))
+}
+
+#* @get /expression
+#* @serializer html
+function() {
+  read_file(file.path("www", "expression.html"))
 }
 
 #* @get /volcano
@@ -772,3 +1215,138 @@ function() {
   read_file(file.path("www", "app.js"))
 }
 
+#* @get /expression.js
+#* @serializer contentType list(type="text/javascript")
+function() {
+  read_file(file.path("www", "expression.js"))
+}
+
+# =====================================================
+# DESeq2 ENDPOINT (volcano/MA ready)
+# =====================================================
+
+map_symbols_for_species <- function(ids, species = "human", id_type = NULL) {
+  # Returns a character vector of symbols, falling back to the input IDs.
+  if (!requireNamespace("AnnotationDbi", quietly = TRUE)) {
+    warning("AnnotationDbi not installed; returning input IDs as symbols.")
+    return(ids)
+  }
+  pkg <- switch(tolower(species),
+    "human" = "org.Hs.eg.db",
+    "mouse" = "org.Mm.eg.db",
+    "fly"   = "org.Dm.eg.db",
+    NULL
+  )
+  if (is.null(pkg) || !requireNamespace(pkg, quietly = TRUE)) {
+    warning(sprintf("Org package for species '%s' not installed; returning input IDs as symbols.", species))
+    return(ids)
+  }
+
+  # Guess keytype if not provided
+  guess_keytype <- function(x) {
+    if (all(grepl("^FBgn", x, ignore.case = FALSE))) return("FLYBASE")
+    if (all(grepl("^ENS", x, ignore.case = TRUE))) return("ENSEMBL")
+    "SYMBOL"
+  }
+  keytype <- id_type %||% guess_keytype(ids)
+
+  suppressWarnings({
+    db_obj <- get(pkg, envir = asNamespace(pkg))
+    mapped <- AnnotationDbi::mapIds(
+      x = db_obj,
+      keys = ids,
+      column = "SYMBOL",
+      keytype = keytype,
+      multiVals = "first"
+    )
+  })
+  mapped[is.na(mapped) | mapped == ""] <- ids[is.na(mapped) | mapped == ""]
+  unname(as.character(mapped))
+}
+
+#' Run DESeq2 differential expression
+#' @parser multi
+#' @post /api/deseq
+#' @serializer json
+function(req, res) {
+  library(DESeq2)
+  library(jsonlite)
+
+  parts <- req$body %||% list()
+
+  get_part <- function(name) {
+    for (p in parts) {
+      if (!is.null(p$name) && identical(p$name, name)) return(p)
+    }
+    NULL
+  }
+
+  file_part <- get_part("counts_file")
+  json_part <- get_part("payload")
+
+  if (is.null(file_part)) {
+    res$status <- 400
+    return(list(error = "No counts matrix uploaded."))
+  }
+
+  if (is.null(json_part)) {
+    res$status <- 400
+    return(list(error = "No sample groups (payload) provided."))
+  }
+
+  tmp_path <- tempfile(fileext = ".csv")
+  writeBin(file_part$value, tmp_path)
+  counts <- read.csv(tmp_path, row.names = 1, check.names = FALSE)
+
+  body <- jsonlite::fromJSON(rawToChar(json_part$value))
+  g1 <- trimws(unlist(strsplit(body$group1, ",")))
+  g2 <- trimws(unlist(strsplit(body$group2, ",")))
+  samples <- c(g1, g2)
+
+  if (!all(samples %in% colnames(counts))) {
+    missing <- samples[!samples %in% colnames(counts)]
+    res$status <- 400
+    return(list(error = paste("Missing samples:", paste(missing, collapse=", "))))
+  }
+
+  condition <- factor(c(rep("group1", length(g1)), rep("group2", length(g2))))
+  colData <- data.frame(row.names = samples, condition = condition)
+
+  dds <- DESeqDataSetFromMatrix(
+    countData = counts[, samples],
+    colData = colData,
+    design = ~ condition
+  )
+
+  dds <- DESeq(dds)
+  res_df <- as.data.frame(results(dds))
+  res_df$gene <- rownames(res_df)
+
+  species <- body$species %||% "human"
+  id_type <- body$id_type %||% NULL
+  res_df$symbol <- map_symbols_for_species(res_df$gene, species = species, id_type = id_type)
+
+  volcano_df <- res_df %>%
+    dplyr::transmute(
+      base_mean = baseMean,
+      log2fold_change = log2FoldChange,
+      padj = padj,
+      symbol = symbol,
+      gene_id = gene
+    )
+
+  list(
+    results = volcano_df,
+    meta = list(
+      species = species,
+      id_type = id_type %||% NA_character_
+    )
+  )
+}
+
+
+#* @get /deseq
+#* @serializer html
+function() {
+  read_file(file.path("www", "deseq.html"))
+}
